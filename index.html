@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>iC connections</title>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega@5.20.2"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5.1.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6.17.0"></script>
+<script src="irplot.js"></script>
+<style>
+th, td {
+    border: 1px solid #888;
+}
+#packetNum {
+    width: 50px;
+}
+.weight {
+    width: 50px;
+}
+#options td {
+  padding: 10px;
+}
+#records {
+  border-collapse: collapse;
+}
+</style>
+</head>
+<body>
+
+<h1>iC connections</h1>
+
+<p>Choose the options, and one or more traces (not too many or it will be slow), then press "Plot". Dragging on the lower chart will zoom the upper one, and the selection on the lower chart can be dragged to move it. Options can be saved/shared using the box at the bottom.</p>
+
+<div id="vis"></div>
+
+<table id="options"><tr>
+  <td>
+    Channel:<br>
+    <input type="radio" name="channel" id="channelA" checked><label for="channelA">Channel A</label><br>
+    <input type="radio" name="channel" id="channelB"><label for="channelB">Channel B</label><br>
+    <input type="radio" name="channel" id="channelBelow"><label for="channelBelow">Both, with B below</label><br>
+    <input type="radio" name="channel" id="channelOverlap"><label for="channelOverlap">Both, overlapping (only if all packets are shown)</label>
+  </td>
+  <td>
+    Trace label:<br>
+    <input type="radio" name="ylabel" id="ylabelID" checked><label for="ylabelID">ID</label><br>
+    <input type="radio" name="ylabel" id="ylabelSizes"><label for="ylabelSizes">A's shot sizes</label><br>
+    <input type="radio" name="ylabel" id="ylabelWasHit"><label for="ylabelWasHit">A was hit (turns)</label>
+  </td>
+  <td>
+    Select traces from table below.<br><br>
+    <input type="number" name="packetNum" id="packetNum" min="0" value="0"><label for="packetNum">Packet number (0 for all)</label><br><br>
+    <input type="button" value="Plot" id="buttonPlot">
+  </td>
+</tr></table>
+
+<table id="records">
+  <thead>
+    <tr>
+      <th>Position<br>(0 for none)</th>
+      <th>ID</th>
+      <th>A's shot sizes</th>
+      <th>A was hit<br>(turns)</th>
+      <th>Original note</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div id="saving">
+  Config saving:<br>
+  <textarea rows=10 cols=80 id="configJson"></textarea><br>
+  <input type="button" value="Refresh" id="buttonRefresh">
+  <input type="button" value="Apply" id="buttonApply">
+</div>
+
+
+</body>
+</html>
