@@ -1,16 +1,24 @@
 
 function LineMaker(pulse, height, yStep) {
     let values = [];
+    let markers = [];
     let labels = [];
     let y = 0;
     let rows = 0;
 
     function add(durations, name, label) {
         let x = 0;
+        let prevX = -2000;
         for (let i = 0; i < durations.length; i ++) {
             values.push({name: name, x: x, y: y});
             x += durations[i] - pulse;
             values.push({name: name, x: x, y: y + height});
+            if (x - prevX > 1000) {
+                for (let j = 1; j <= 8; j ++) {
+                    markers.push({x: x + 100*j + pulse/2, y: y + height/2});
+                }
+                prevX = x;
+            }
             x += pulse;
         }
         if (label != null) {
@@ -40,7 +48,14 @@ function LineMaker(pulse, height, yStep) {
         };
     }
     
-    return {add: add, values: values, labels: labels, makeAxis: makeAxis, count: function(){return rows;} };
+    return {
+        add: add,
+        values: values,
+        markers: markers,
+        labels: labels,
+        makeAxis: makeAxis,
+        count: function() { return rows; }
+    };
 }
 
 function selectPacket(durations, packetNum) {
@@ -159,20 +174,40 @@ function plot(records) {
         "vconcat": [{
             "width": width,
             "height": LM.count() * 50 + 1,
-            "mark": {
-                "type": "line",
-                "interpolate": "step-after"
-            },
-            "encoding": {
-                "x": {
-                    "field": "x",
-                    "type": "quantitative",
-                    "scale": {"domain": {"param": "brush"}},
-                    "axis": {"title": ""}
+            "layer": [{
+                "mark": {
+                    "type": "line",
+                    "interpolate": "step-after"
                 },
-                "y": {"field": "y", "type": "quantitative", "axis": axis},
-                "color": {"field": "name", "type": "nominal", "legend": null},
-            }
+                "encoding": {
+                    "x": {
+                        "field": "x",
+                        "type": "quantitative",
+                        "scale": {"domain": {"param": "brush"}},
+                        "axis": {"title": ""}
+                    },
+                    "y": {"field": "y", "type": "quantitative", "axis": axis},
+                    "color": {"field": "name", "type": "nominal", "legend": null},
+                }
+             }, {
+                "data": {
+                    "values": LM.markers
+                },
+                "mark": {
+                    "type": "point",
+                    "size": 25,
+                    "strokeWidth": 0.7,
+                    "color": "black"
+                },
+                "encoding": {
+                    "x": {
+                        "field": "x",
+                        "type": "quantitative",
+                        "scale": {"domain": {"param": "brush"}}
+                    },
+                    "y": {"field": "y", "type": "quantitative"}
+                }
+             }]
          }, {
             "width": width,
             "height": LM.count() * 20 + 1,
