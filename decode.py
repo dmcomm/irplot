@@ -13,6 +13,23 @@ def checksum(x):
             mask ^= 0x10811
     return result
 
+#if a single bit 1->0 will fix it, return fixed data, else None
+def autofix(data, chk):
+    chkOfData = checksum(data)
+    if chkOfData == chk:
+        return data
+    mask = 0x0001
+    for i in range(16):
+        data2 = data & ~mask
+        chk2 = chk & ~mask
+        if chkOfData == chk2:
+            return data
+        if checksum(data2) == chk:
+            return data2
+        mask <<= 1
+    return None
+
+#7D E0 -> C0, 7D E1 -> C1, 7D by itself is an error
 def byteReplace(bytes):
     result = []
     got7D = False
@@ -76,12 +93,15 @@ class iC_decoder:
         bytes2 = byteReplace(self.bytes)
         if len(bytes2) == 4 and None not in bytes2:
             data = bytes2[1] << 8 | bytes2[0]
-            checksum1 = bytes2[3] << 8 | bytes2[2]
-            checksum2 = checksum(data)
-            if checksum1 == checksum2:
+            chkGiven = bytes2[3] << 8 | bytes2[2]
+            if chkGiven == checksum(data):
                 self.checked.append("%04X" % data)
             else:
-                self.checked.append("chkfail " + hexstr)
+                dataFixed = autofix(data, chkGiven)
+                if dataFixed is not None:
+                    self.checked.append("%04X autofix " % dataFixed + hexstr)
+                else:
+                    self.checked.append("chkfail " + hexstr)
         else:
             self.checked.append("error " + hexstr)
         self.hexdigits = []
