@@ -1,25 +1,32 @@
 
-function LineMaker(pulse, height, yStep) {
+function LineMaker(height, yStep) {
     let values = [];
     let markers = [];
     let labels = [];
     let y = 0;
     let rows = 0;
 
-    function add(durations, name, label) {
+    function add(durations, name, label, decode) {
         let x = 0;
-        let prevX = -2000;
-        for (let i = 0; i < durations.length; i ++) {
-            values.push({name: name, x: x, y: y});
-            x += durations[i] - pulse;
-            values.push({name: name, x: x, y: y + height});
-            if (x - prevX > 1000) {
-                for (let j = 1; j <= 8; j ++) {
-                    markers.push({x: x + 100*j + pulse/2, y: y + height/2});
+        let prevXtoOn = -2000;
+        let isOn = false;
+        values.push({name: name, x: -100, y: y});
+        for (let i = 0; i <= durations.length; i ++) {
+            if (isOn) {
+                values.push({name: name, x: x, y: y + height});
+            } else {
+                values.push({name: name, x: x, y: y});
+                if (decode === "ic" && x - prevXtoOn > 1000) {
+                    for (let j = 1; j <= 8; j ++) {
+                        markers.push({x: x + 100*j, y: y + height/2});
+                    }
+                    prevXtoOn = x;
                 }
-                prevX = x;
             }
-            x += pulse;
+            if (i < durations.length) {
+                x += durations[i];
+            }
+            isOn = !isOn;
         }
         if (label != null) {
             labels.push({y: y, label: label});
@@ -74,6 +81,24 @@ function selectPacket(durations, packetNum) {
             result.push(dur);
         }
     }
+    return result;
+}
+
+function insertOnTimes(durations, pulse) {
+    if (durations.length == 0) {
+        return [];
+    }
+    let result = [durations[0]];
+    for (let i = 1; i < durations.length; i ++) {
+        if (durations[i] > pulse) {
+            result.push(pulse);
+            result.push(durations[i] - pulse);
+        } else {
+            result.push(pulse/10);
+            result.push(pulse/10);
+        }
+    }
+    result.push(pulse);
     return result;
 }
 
@@ -135,30 +160,40 @@ function applyConfigToDocument(config) {
 }
 
 function plot(records) {
-    let LM = LineMaker(1, 10, 15);
+    let LM = LineMaker(10, 15);
     let config = readConfigFromDocument();
     for (let i = 0; i < config.selection.length; i ++) {
         let id = config.selection[i].id;
         let label = id;
+        let decode = records[id].decode;
         if (config.label === "shotSizeA" && records[id].shotSizeA) {
             label = id + " " + records[id].shotSizeA;
         }
         if (config.label === "wasHitA" && records[id].wasHitA) {
             label = id + " " + records[id].wasHitA;
         }
-        let dursA = selectPacket(records[id].A, config.packet);
-        let dursB = selectPacket(records[id].B, config.packet);
+        let dursA = records[id].A;
+        let dursB = records[id].B;
+        if (!dursB) {
+            dursB = [];
+        }
+        dursA = selectPacket(dursA, config.packet);
+        dursB = selectPacket(dursB, config.packet);
+        if (!records[id].hasOnTimes) {
+            dursA = insertOnTimes(dursA, 1);
+            dursB = insertOnTimes(dursB, 1);
+        }
         if (config.channel === "A") {
-            LM.add(dursA, id + " (A)", label);
+            LM.add(dursA, id + " (A)", label, decode);
         } else if (config.channel === "B") {
-            LM.add(dursB, id + " (B)", label);
+            LM.add(dursB, id + " (B)", label, decode);
         } else if (config.channel === "below") {
-            LM.add(dursA, id + " (A)", label + " (A)");
-            LM.add(dursB, id + " (B)", label + " (B)");
+            LM.add(dursA, id + " (A)", label + " (A)", decode);
+            LM.add(dursB, id + " (B)", label + " (B)", decode);
         } else {
             //overlap
-            LM.add(dursA, id + " (A)", null);
-            LM.add(dursB, id + " (B)", label);
+            LM.add(dursA, id + " (A)", null, decode);
+            LM.add(dursB, id + " (B)", label, decode);
         }
     }
     
