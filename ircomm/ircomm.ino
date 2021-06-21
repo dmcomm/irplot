@@ -47,16 +47,7 @@ void addLogItem(uint16_t item) {
     }
 }
 
-void outputGapAndShortPulse(uint16_t t) {
-    if (t > PULSE_LENGTH) {
-        delayMicroseconds(t - PULSE_LENGTH);
-    }
-    digitalWrite(pinIrLed, HIGH);
-    delayMicroseconds(PULSE_LENGTH);
-    digitalWrite(pinIrLed, LOW);
-}
-
-void outputLongPulse(uint16_t t) {
+void outputPulse(uint16_t t) {
     digitalWrite(pinIrLed, HIGH);
     delayMicroseconds(t);
     digitalWrite(pinIrLed, LOW);
@@ -90,15 +81,15 @@ int32_t waitLevel(uint8_t pin, uint8_t level, int32_t timeoutMicros) {
     }
 }
 
-int8_t receivePacket(uint16_t seqType, bool first, uint16_t endTimeout) {
-    int32_t t, tFalling;
+int8_t receivePacket(bool first) {
+    int32_t t;
     uint8_t pin;
     if (first) {
         t = initialTimeout;
     } else {
         t = replyTimeout;
     }
-    if (seqType == TYPE_MODULATED) {
+    if (sequenceHandler.isModulated) {
         pin = pinInputDemod;
     } else {
         pin = pinInputBasic;
@@ -114,110 +105,80 @@ int8_t receivePacket(uint16_t seqType, bool first, uint16_t endTimeout) {
         addLogItem(packDur(t)); //TODO ?
     }
     while (true) {
-        tFalling = t;
-        t = waitLevel(pin, HIGH, endTimeout);
+        t = waitLevel(pin, HIGH, sequenceHandler.replyDelay);
         if (t == -1) {
             //it shouldn't stop in the "on" state
             addLogItem(END);
             return -1;
         }
-        if (seqType != TYPE_PULSE) {
-            //recording the "on" time
-            addLogItem(packDur(t));
-        }
-        t = waitLevel(pin, LOW, endTimeout);
+        //recording the "on" time
+        addLogItem(packDur(t));
+        t = waitLevel(pin, LOW, sequenceHandler.replyDelay);
         if (t == -1) {
             //finished
             return 0;
         }
-        if (seqType == TYPE_PULSE) {
-            //recording the total time
-            addLogItem(packDur(t + tFalling));
-        } else {
-            //recording the "off" time
-            addLogItem(packDur(t));
-        }
+        //recording the "off" time
+        addLogItem(packDur(t));
     }
 }
 
-void execute(const uint16_t * sequence) {
-    uint16_t seqType = pgm_read_word_near(sequence);
-    uint16_t cursor = 1;
+void execute() {
+    uint16_t cursor = 0;
     uint16_t item;
     bool wasOn = false;
-    bool receivingFirst;
     logSize = 0;
-    Serial.println(seqType); //test
+    if (sequenceHandler.goFirst) {
+        if (receivePacket(true) == -1) {
+            return;
+        }
+    }
     while (true) {
-        item = pgm_read_word_near(sequence + cursor);
+        item = sequenceHandler.get(cursor);
         if (item == END) {
-            break;
+            return;
         }
         if (item == WAIT) {
             wasOn = false;
-            cursor += 1;
-            item = pgm_read_word_near(sequence + cursor); //end timeout
-            receivingFirst = (cursor == 2);
-            if (receivePacket(seqType, receivingFirst, item) == -1) {
-                break;
+            if (receivePacket(false) == -1) {
+                return;
             }
         } else {
-            if (seqType == TYPE_PULSE) {
-                outputGapAndShortPulse(item);
-            } else if (seqType == TYPE_GAP_AND_PULSE) {
-                if (wasOn) {
-                    delayMicroseconds(item);
-                    wasOn = false;
-                } else {
-                    outputLongPulse(item);
-                    wasOn = true;
-                }
+            if (wasOn) {
+                delayMicroseconds(item);
+                wasOn = false;
+            } else if (sequenceHandler.isModulated) {
+                outputModulated(item);
+                wasOn = true;
             } else {
-                //modulated
-                if (wasOn) {
-                    delayMicroseconds(item);
-                    wasOn = false;
-                } else {
-                    outputModulated(item);
-                    wasOn = true;
-                }
+                outputPulse(item);
+                wasOn = true;
             }
         }
         cursor ++;
     }
-    for (cursor = 0; cursor < logSize; cursor ++) {
-        Serial.print(unpackDur(logBuffer[cursor]));
-        Serial.write(',');
-    }
-    Serial.println();
 }
 
 void loop() {
-    int8_t b, n, i;
-    uint16_t * sequence;
+    int8_t b;
+    uint16_t cursor;
     if (Serial.available()) {
         b = Serial.read();
-        n = b - 'a';
         if (b == '\n') {
             //do nothing
-        } else if (n >= 0 && n < numSequences) {
-            sequence = pgm_read_ptr_near(sequences + n);
-            while (pgm_read_word_near(sequence) != END) {
-                sequence ++;
-            }
-            sequence ++;
-            execute(sequence);
-        } else {
-            for (n = 0; n < numSequences; n ++) {
-                Serial.write('a' + n);
-                Serial.write(' ');
-                sequence = pgm_read_ptr_near(sequences + n);
-                while (pgm_read_word_near(sequence) != END) {
-                    Serial.write(pgm_read_word_near(sequence));
-                    sequence ++;
+        } else if (sequenceHandler.load(b) == 0) {
+            execute();
+            for (cursor = 0; cursor < logSize; cursor ++) {
+                if (logBuffer[cursor] == END) {
+                    Serial.print(F("END"));
+                } else {
+                    Serial.print(unpackDur(logBuffer[cursor]));
                 }
-                Serial.println();
+                Serial.write(',');
             }
+            Serial.println();
+        } else {
+            sequenceHandler.list(Serial);
         }
     }
 }
