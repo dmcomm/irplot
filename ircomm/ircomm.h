@@ -8,7 +8,6 @@ const uint16_t WAIT = 0xFFFF;
 const uint16_t END = 0xFFFE;
 
 const uint16_t PULSE_LENGTH = 20;
-const uint16_t REPLY_TIMEOUT = 20000;
 
 extern const uint16_t * const sequences[] PROGMEM;
 extern const int8_t numSequences;
