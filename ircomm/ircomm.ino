@@ -5,6 +5,7 @@
 const byte pinIrLed = 6;
 const byte pinInputBasic = 3;
 const byte pinInputDemod = 8;
+const byte pinProbe = 2;
 
 const int32_t replyTimeout = 20000;
 const int32_t initialTimeout = 5000000;
@@ -20,6 +21,7 @@ void setup() {
     pinMode(pinIrLed, OUTPUT);
     pinMode(pinInputBasic, INPUT_PULLUP);
     pinMode(pinInputDemod, INPUT_PULLUP);
+    pinMode(pinProbe, OUTPUT);
 }
 
 uint16_t packDur(uint32_t dur) {
@@ -62,10 +64,11 @@ void outputModulated(uint16_t t) {
     }
     for (uint16_t pulse = 0; pulse < pulses; pulse ++) {
         digitalWrite(pinIrLed, HIGH);
-        delayMicroseconds(13);
+        delayMicroseconds(7);
         digitalWrite(pinIrLed, LOW);
-        delayMicroseconds(13);
+        delayMicroseconds(7);
     }
+    //TODO Take into account the time spent not waiting. Or use PWM.
 }
 
 int32_t waitLevel(uint8_t pin, uint8_t level, int32_t timeoutMicros) {
@@ -128,7 +131,7 @@ void execute() {
     uint16_t item;
     bool wasOn = false;
     logSize = 0;
-    if (sequenceHandler.goFirst) {
+    if (!sequenceHandler.goFirst) {
         if (receivePacket(true) == -1) {
             return;
         }
@@ -139,6 +142,9 @@ void execute() {
             return;
         }
         if (item == WAIT) {
+            digitalWrite(pinProbe, HIGH);
+            delayMicroseconds(5);
+            digitalWrite(pinProbe, LOW);
             wasOn = false;
             if (receivePacket(false) == -1) {
                 return;
