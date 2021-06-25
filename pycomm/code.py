@@ -1,7 +1,7 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
 #Some Data Link interaction.
-#Tested with CircuitPython 20210622-47a6b13 on Pi Pico.
+#Tested with CircuitPython 20210625-769805c on Pi Pico.
 
 import array
 import board
@@ -10,10 +10,8 @@ import digitalio
 import pulseio
 import pwmio
 
-TYPE_DATALINK_TRADE = 0
-TYPE_DATALINK_BATTLE = 1
-TYPE_FUSION_TRADE = 2
-TYPE_FUSION_BATTLE = 3
+TYPE_DATALINK = 0
+TYPE_FUSION = 1
 
 WAIT_FOREVER = None
 WAIT_REPLY = -1
@@ -30,7 +28,6 @@ demodPower.value = True
 
 pwm = pwmio.PWMOut(board.GP11, frequency=38000, duty_cycle=2**15)
 pulseOut = pulseio.PulseOut(pwm)
-pulseOut.send(array.array('H', [100, 100])) #workaround for bug?
 
 #GP12 used for LED joint
 
@@ -84,9 +81,7 @@ def waitPulse(pulsesIn, timeout_ns, position):
 	else:
 		raise WaitEnded("%d" % position)
 
-def receivePacketDatalink(pulsesIn, bitsWanted, waitForStart_ns):
-	if bitsWanted % 8 != 0:
-		raise NotImplementedError("bitsWanted not divisible by 8")
+def receivePacketDatalink(pulsesIn, waitForStart_ns):
 	pulsesIn.clear()
 	pulsesIn.resume()
 	bytes = []
@@ -100,22 +95,31 @@ def receivePacketDatalink(pulsesIn, bitsWanted, waitForStart_ns):
 		if t < 2000 or t > 3000:
 			raise BadPacket("start gap = %d" % t)
 		currentByte = 0
-		for i in range(1, bitsWanted + 1):
-			t = waitPulse(pulsesIn, 3000000, 2*i)
-			if t < 300 or t > 650:
-				raise BadPacket("bit %d pulse = %d" % (i, t))
-			t = waitPulse(pulsesIn, 3000000, 2*i+1)
+		bitCount = 0
+		while True:
+			t = waitPulse(pulsesIn, 3000000, 2*bitCount+1)
+			if t >= 300 and t <= 650:
+				#normal pulse
+				pass
+			elif t >= 1000 and t <= 1400:
+				#stop pulse
+				break
+			else:
+				raise BadPacket("bit %d pulse = %d" % (bitCount, t))
+			t = waitPulse(pulsesIn, 3000000, 2*bitCount+2)
 			if t < 400 or t > 1500:
-				raise BadPacket("bit %d gap = %d" % (i, t))
+				raise BadPacket("bit %d gap = %d" % (bitCount, t))
 			currentByte >>= 1
 			if t > 800:
 				currentByte |= 0x80
-			if i % 8 == 0:
+			bitCount += 1
+			if bitCount % 8 == 0:
 				bytes.append(currentByte)
 				currentByte = 0
-		t = waitPulse(pulsesIn, 3000000, bitsWanted+1)
-		if t < 1000 or t > 1400:
-			raise BadPacket("stop pulse = %d" % t)
+		if bitCount % 8 != 0:
+			#currentByte >>= 8 - bitCount % 8
+			#bytes.append(currentByte)
+			raise BadPacket("bitCount = %d" % bitCount)
 	finally:
 		pulsesIn.pause()
 		addToLog(0xFFFF)
@@ -149,20 +153,24 @@ def doComm(sequence, printLog):
 	logSize = 0
 	commType = sequence[0]
 	goFirst = sequence[1]
-
-	if commType == TYPE_DATALINK_TRADE:
-		sendBuffer = array.array('H', range(132))
+	packetsToSend = sequence[2:]
+	if packetsToSend == []:
+		bytesInPacket = 0
+	else:
+		bytesInPacket = len(packetsToSend[0])
+	if commType == TYPE_DATALINK:
+		sendBuffer = array.array('H', range(bytesInPacket * 16 + 4))
 		def sendPacket(packet):
 			sendPacketDatalink(sendBuffer, packet)
 		def receivePacket(w):
-			return receivePacketDatalink(demodPulsesIn, 64, w)
+			return receivePacketDatalink(demodPulsesIn, w)
 	else:
 		raise ValueError("commType")
 	try:
 		if not goFirst:
 			received = receivePacket(WAIT_FOREVER)
 			printBytes(received)
-		for packet in sequence[2:]:
+		for packet in packetsToSend:
 			sendPacket(packet)
 			received = receivePacket(WAIT_REPLY)
 			printBytes(received)
@@ -179,10 +187,10 @@ def doComm(sequence, printLog):
 	else:
 		time.sleep(0.25)
 
-datalinkGive10Pt1st = [TYPE_DATALINK_TRADE, True, [0x13,0x01,0x00,0x00,0x10,0xB1,0x00,0xD5], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
-datalinkTakePt1st = [TYPE_DATALINK_TRADE, True, [0x13,0x01,0x10,0x00,0x00,0xB1,0x00,0xD5], [0x13,0x01,0x10,0x00,0x00,0xB1,0xB1,0x86]]
-datalinkGive10Pt2nd = [TYPE_DATALINK_TRADE, False, [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
-datalinkTakePt2nd = [TYPE_DATALINK_TRADE, False, [0x13,0x01,0x10,0x00,0x10,0xB1,0xB1,0x96], [0x13,0x01,0x10,0x00,0x10,0xB1,0xB1,0x96]]
+datalinkGive10Pt1st = [TYPE_DATALINK, True, [0x13,0x01,0x00,0x00,0x10,0xB1,0x00,0xD5], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
+datalinkTakePt1st = [TYPE_DATALINK, True, [0x13,0x01,0x10,0x00,0x00,0xB1,0x00,0xD5], [0x13,0x01,0x10,0x00,0x00,0xB1,0xB1,0x86]]
+datalinkGive10Pt2nd = [TYPE_DATALINK, False, [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
+datalinkTakePt2nd = [TYPE_DATALINK, False, [0x13,0x01,0x10,0x00,0x10,0xB1,0xB1,0x96], [0x13,0x01,0x10,0x00,0x10,0xB1,0xB1,0x96]]
 
 runs = 1
 while(True):
