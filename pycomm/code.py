@@ -52,6 +52,30 @@ class WaitEnded(Exception):
 class BadPacket(Exception):
 	pass
 
+class Params:
+	def __init__(self, commType):
+		if commType == TYPE_DATALINK:
+			self.startPulseMin = 9000
+			self.startPulseSend = 9800
+			self.startPulseMax = 11000
+			self.startGapMin = 2000
+			self.startGapSend = 2450
+			self.startGapMax = 3000
+			self.bitPulseMin = 300
+			self.bitPulseSend = 500
+			self.bitPulseMax = 650
+			self.bitGapMin = 300
+			self.bitGapSendShort = 700
+			self.bitGapThreshold = 800
+			self.bitGapSendLong = 1300
+			self.bitGapMax = 1500
+			self.stopPulseMin = 1000
+			self.stopPulseSend = 1300
+			self.stopPulseMax = 1400
+			self.stopGapSend = 400
+			self.stepTimeout_ns = 5_000_000
+			self.replyTimeout_ns = 12_000_000
+
 class FakePulsesIn:
 	def __init__(self, arr):
 		self.arr = arr
@@ -82,36 +106,36 @@ def waitPulse(pulsesIn, timeout_ns, position):
 	else:
 		raise WaitEnded("%d" % position)
 
-def receivePacketDatalink(pulsesIn, waitForStart_ns):
+def receivePacketDatalink(pulsesIn, params, waitForStart_ns):
 	pulsesIn.clear()
 	pulsesIn.resume()
 	bytes = []
 	if waitForStart_ns == WAIT_REPLY:
-		waitForStart_ns = 12000000
+		waitForStart_ns = params.replyTimeout_ns
 	try:
 		t = waitPulse(pulsesIn, waitForStart_ns, -2)
-		if t < 9000 or t > 11000:
+		if t < params.startPulseMin or t > params.startPulseMax:
 			raise BadPacket("start pulse = %d" % t)
-		t = waitPulse(pulsesIn, 5000000, -1)
-		if t < 2000 or t > 3000:
+		t = waitPulse(pulsesIn, params.stepTimeout_ns, -1)
+		if t < params.startGapMin or t > params.startGapMax:
 			raise BadPacket("start gap = %d" % t)
 		currentByte = 0
 		bitCount = 0
 		while True:
-			t = waitPulse(pulsesIn, 3000000, 2*bitCount+1)
-			if t >= 300 and t <= 650:
+			t = waitPulse(pulsesIn, params.stepTimeout_ns, 2*bitCount+1)
+			if t >= params.bitPulseMin and t <= params.bitPulseMax:
 				#normal pulse
 				pass
-			elif t >= 1000 and t <= 1400:
+			elif t >= params.stopPulseMin and t <= params.stopPulseMax:
 				#stop pulse
 				break
 			else:
 				raise BadPacket("bit %d pulse = %d" % (bitCount, t))
-			t = waitPulse(pulsesIn, 3000000, 2*bitCount+2)
-			if t < 300 or t > 1500:
+			t = waitPulse(pulsesIn, params.stepTimeout_ns, 2*bitCount+2)
+			if t < params.bitGapMin or t > params.bitGapMax:
 				raise BadPacket("bit %d gap = %d" % (bitCount, t))
 			currentByte >>= 1
-			if t > 800:
+			if t > params.bitGapThreshold:
 				currentByte |= 0x80
 			bitCount += 1
 			if bitCount % 8 == 0:
@@ -126,23 +150,23 @@ def receivePacketDatalink(pulsesIn, waitForStart_ns):
 		addToLog(0xFFFF)
 	return bytes
 
-def sendPacketDatalink(sendBuffer, bytes):
-	sendBuffer[0] = 9800
-	sendBuffer[1] = 2450
+def sendPacketDatalink(sendBuffer, params, bytes):
+	sendBuffer[0] = params.startPulseSend
+	sendBuffer[1] = params.startGapSend
 	bufCursor = 2
 	for i in range(len(bytes)):
 		currentByte = bytes[i]
 		for j in range(8):
-			sendBuffer[bufCursor] = 500
+			sendBuffer[bufCursor] = params.bitPulseSend
 			bufCursor += 1
 			if currentByte & 1:
-				sendBuffer[bufCursor] = 1300
+				sendBuffer[bufCursor] = params.bitGapSendLong
 			else:
-				sendBuffer[bufCursor] = 700
+				sendBuffer[bufCursor] = params.bitGapSendShort
 			bufCursor += 1
 			currentByte >>= 1
-	sendBuffer[bufCursor] = 1300
-	sendBuffer[bufCursor + 1] = 400
+	sendBuffer[bufCursor] = params.stopPulseSend
+	sendBuffer[bufCursor + 1] = params.stopGapSend
 	pulseOut.send(sendBuffer)
 
 def printBytes(bytes):
@@ -160,12 +184,13 @@ def doComm(sequence, printLog):
 		bytesInPacket = 0
 	else:
 		bytesInPacket = len(packetsToSend[0])
+	params = Params(commType)
 	if commType == TYPE_DATALINK:
 		sendBuffer = array.array('H', range(bytesInPacket * 16 + 4))
 		def sendPacket(packet):
-			sendPacketDatalink(sendBuffer, packet)
+			sendPacketDatalink(sendBuffer, params, packet)
 		def receivePacket(w):
-			return receivePacketDatalink(demodPulsesIn, w)
+			return receivePacketDatalink(demodPulsesIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -202,4 +227,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(datalinkBattle1st_2, True)
+	doComm(datalinkGive10Pt1st, True)
