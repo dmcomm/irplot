@@ -38,13 +38,37 @@ rawPower = digitalio.DigitalInOut(board.GP14)
 rawPower.direction = digitalio.Direction.OUTPUT
 rawPower.value = True
 
-logBuffer = array.array('L', range(2000))
-logSize = 0
-def addToLog(x):
-	global logSize
-	if logSize < len(logBuffer):
-		logBuffer[logSize] = x
-		logSize += 1
+class Buffer:
+	def __init__(self, length, typecode, filler=0):
+		self.array = array.array(typecode)
+		self.length = length
+		self.cursor = 0
+		for i in range(length):
+			self.array.append(filler)
+	def __len__(self):
+		return self.cursor
+	def __getitem__(self, i):
+		if i < 0 or i > self.cursor:
+			raise IndexError("index out of range")
+		return self.array[i]
+	def __setitem__(self, i, x):
+		if i < 0 or i > self.cursor:
+			raise IndexError("index out of range")
+		self.array[i] = x
+	def appendNoError(self, x):
+		if self.cursor == self.length:
+			return False
+		self.array[self.cursor] = x
+		self.cursor += 1
+		return True
+	def append(self, x):
+		if not self.appendNoError(x):
+			raise IndexError("full")
+	def clear(self):
+		self.cursor = 0
+
+logBuffer = Buffer(2000, "L")
+receivedBytes = Buffer(30, "B")
 
 class WaitEnded(Exception):
 	pass
@@ -99,7 +123,7 @@ def waitPulse(pulsesIn, timeout_ns, position):
 		pass
 	if len(pulsesIn) != 0:
 		t = pulsesIn.popleft()
-		addToLog(t)
+		logBuffer.appendNoError(t)
 		return t
 	elif position is None:
 		return None
@@ -109,7 +133,7 @@ def waitPulse(pulsesIn, timeout_ns, position):
 def receivePacketDatalink(pulsesIn, params, waitForStart_ns):
 	pulsesIn.clear()
 	pulsesIn.resume()
-	bytes = []
+	receivedBytes.clear()
 	if waitForStart_ns == WAIT_REPLY:
 		waitForStart_ns = params.replyTimeout_ns
 	try:
@@ -139,16 +163,15 @@ def receivePacketDatalink(pulsesIn, params, waitForStart_ns):
 				currentByte |= 0x80
 			bitCount += 1
 			if bitCount % 8 == 0:
-				bytes.append(currentByte)
+				receivedBytes.appendNoError(currentByte)
 				currentByte = 0
 		if bitCount % 8 != 0:
 			#currentByte >>= 8 - bitCount % 8
-			#bytes.append(currentByte)
+			#receivedBytes.appendNoError(currentByte)
 			raise BadPacket("bitCount = %d" % bitCount)
 	finally:
 		pulsesIn.pause()
-		addToLog(0xFFFF)
-	return bytes
+		logBuffer.appendNoError(0xFFFF)
 
 def sendPacketDatalink(sendBuffer, params, bytes):
 	sendBuffer[0] = params.startPulseSend
@@ -175,8 +198,7 @@ def printBytes(bytes):
 	print()
 
 def doComm(sequence, printLog):
-	global logSize
-	logSize = 0
+	logBuffer.clear()
 	commType = sequence[0]
 	goFirst = sequence[1]
 	packetsToSend = sequence[2:]
@@ -190,23 +212,23 @@ def doComm(sequence, printLog):
 		def sendPacket(packet):
 			sendPacketDatalink(sendBuffer, params, packet)
 		def receivePacket(w):
-			return receivePacketDatalink(demodPulsesIn, params, w)
+			receivePacketDatalink(demodPulsesIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
 		if not goFirst:
-			received = receivePacket(WAIT_FOREVER)
-			printBytes(received)
+			receivePacket(WAIT_FOREVER)
+			printBytes(receivedBytes)
 		for packet in packetsToSend:
 			sendPacket(packet)
-			received = receivePacket(WAIT_REPLY)
-			printBytes(received)
+			receivePacket(WAIT_REPLY)
+			printBytes(receivedBytes)
 	except BadPacket as e:
 		print(repr(e))
 	except WaitEnded as e:
 		print(repr(e))
 	if printLog:
-		for i in range(logSize):
+		for i in range(len(logBuffer)):
 			print(logBuffer[i], end=",")
 		print(".") 
 	if goFirst:
