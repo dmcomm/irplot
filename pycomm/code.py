@@ -1,6 +1,6 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
-#Some Data Link interaction.
+#Some Data Link and Fusion Loader interaction.
 #Tested with CircuitPython 20210625-769805c on Pi Pico.
 
 import array
@@ -70,6 +70,11 @@ class Buffer:
 logBuffer = Buffer(2000, "L")
 receivedBytes = Buffer(30, "B")
 
+arraysToSend = {}
+for numBytes in [5, 6, 8, 12, 18]:
+	theLength = numBytes * 16 + 4
+	arraysToSend[theLength] = array.array('H', range(theLength))
+
 class WaitEnded(Exception):
 	pass
 
@@ -99,6 +104,27 @@ class Params:
 			self.stopGapSend = 400
 			self.stepTimeout_ns = 5_000_000
 			self.replyTimeout_ns = 12_000_000
+		elif commType == TYPE_FUSION:
+			self.startPulseMin = 5000
+			self.startPulseSend = 5880
+			self.startPulseMax = 7000
+			self.startGapMin = 3000
+			self.startGapSend = 3872
+			self.startGapMax = 4000
+			self.bitPulseMin = 250
+			self.bitPulseSend = 480
+			self.bitPulseMax = 600
+			self.bitGapMin = 200
+			self.bitGapSendShort = 480
+			self.bitGapThreshold = 650
+			self.bitGapSendLong = 1450
+			self.bitGapMax = 1600
+			self.stopPulseMin = 700
+			self.stopPulseSend = 950
+			self.stopPulseMax = 1100
+			self.stopGapSend = 400
+			self.stepTimeout_ns = 5_000_000
+			self.replyTimeout_ns = 100_000_000
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -130,7 +156,7 @@ def waitPulse(pulsesIn, timeout_ns, position):
 	else:
 		raise WaitEnded("%d" % position)
 
-def receivePacketDatalink(pulsesIn, params, waitForStart_ns):
+def receivePacketModulated(pulsesIn, params, waitForStart_ns):
 	pulsesIn.clear()
 	pulsesIn.resume()
 	receivedBytes.clear()
@@ -173,27 +199,29 @@ def receivePacketDatalink(pulsesIn, params, waitForStart_ns):
 		pulsesIn.pause()
 		logBuffer.appendNoError(0xFFFF)
 
-def sendPacketDatalink(sendBuffer, params, bytes):
-	sendBuffer[0] = params.startPulseSend
-	sendBuffer[1] = params.startGapSend
+def sendPacketModulated(params, bytesToSend):
+	pulseOutLength = len(bytesToSend) * 16 + 4
+	arrayToSend = arraysToSend[pulseOutLength]
+	arrayToSend[0] = params.startPulseSend
+	arrayToSend[1] = params.startGapSend
 	bufCursor = 2
-	for i in range(len(bytes)):
-		currentByte = bytes[i]
+	for currentByte in bytesToSend:
 		for j in range(8):
-			sendBuffer[bufCursor] = params.bitPulseSend
+			arrayToSend[bufCursor] = params.bitPulseSend
 			bufCursor += 1
 			if currentByte & 1:
-				sendBuffer[bufCursor] = params.bitGapSendLong
+				arrayToSend[bufCursor] = params.bitGapSendLong
 			else:
-				sendBuffer[bufCursor] = params.bitGapSendShort
+				arrayToSend[bufCursor] = params.bitGapSendShort
 			bufCursor += 1
 			currentByte >>= 1
-	sendBuffer[bufCursor] = params.stopPulseSend
-	sendBuffer[bufCursor + 1] = params.stopGapSend
-	pulseOut.send(sendBuffer)
+	arrayToSend[bufCursor] = params.stopPulseSend
+	arrayToSend[bufCursor + 1] = params.stopGapSend
+	pulseOut.send(arrayToSend)
+	return arrayToSend
 
-def printBytes(bytes):
-	for b in bytes:
+def printBytes(bytesToPrint):
+	for b in bytesToPrint:
 		print("0x%02X" % b, end=",")
 	print()
 
@@ -202,17 +230,12 @@ def doComm(sequence, printLog):
 	commType = sequence[0]
 	goFirst = sequence[1]
 	packetsToSend = sequence[2:]
-	if packetsToSend == []:
-		bytesInPacket = 0
-	else:
-		bytesInPacket = len(packetsToSend[0])
 	params = Params(commType)
-	if commType == TYPE_DATALINK:
-		sendBuffer = array.array('H', range(bytesInPacket * 16 + 4))
+	if commType == TYPE_DATALINK or commType == TYPE_FUSION:
 		def sendPacket(packet):
-			sendPacketDatalink(sendBuffer, params, packet)
+			sendPacketModulated(params, packet)
 		def receivePacket(w):
-			receivePacketDatalink(demodPulsesIn, params, w)
+			receivePacketModulated(demodPulsesIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -236,7 +259,7 @@ def doComm(sequence, printLog):
 	else:
 		time.sleep(0.25)
 
-datalinkListen = [TYPE_DATALINK, False, []]
+datalinkListen = [TYPE_DATALINK, False]
 datalinkGive10Pt1st = [TYPE_DATALINK, True, [0x13,0x01,0x00,0x00,0x10,0xB1,0x00,0xD5], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
 datalinkTakePt1st = [TYPE_DATALINK, True, [0x13,0x01,0x10,0x00,0x00,0xB1,0x00,0xD5], [0x13,0x01,0x10,0x00,0x00,0xB1,0xB1,0x86]]
 datalinkGive10Pt2nd = [TYPE_DATALINK, False, [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86], [0x13,0x01,0x00,0x00,0x10,0xB1,0xB1,0x86]]
@@ -245,8 +268,22 @@ datalinkBattle1st_1 = [TYPE_DATALINK, True, [0x11,0x01,0x30,0x16,0x24,0x01,0x01,
 datalinkBattle2nd_1 = [TYPE_DATALINK, False, [0x11,0x01,0x30,0x16,0x24,0x01,0x00,0x08,0x01,0xB1,0xB1,0xE9]]
 datalinkBattle1st_2 = [TYPE_DATALINK, True, [0x11,0x01,0x30,0x16,0x24,0x00,0x00,0x08,0x00,0xB1,0x00,0x36], [0x11,0x01,0x30,0x16,0x24,0x00,0x00,0x08,0x00,0xB1,0xB1,0xE7]]
 
+#Fusion can't initiate when receiving Digimon.
+#Doesn't seem to matter which "take" code we use.
+#Seems to retry individual packets. Need to investigate this.
+fusionListen = [TYPE_FUSION, False]
+fusionGiveAgumon = [TYPE_FUSION, True, [0x0B,0x20,0x00,0x2B,0x00], [0x0B,0xA0,0x40,0x40,0x9B,0x00], [0x0B,0x20,0xF0,0xC7,0x9B]]
+fusionGiveAquilamon = [TYPE_FUSION, True, [0x0B,0x20,0x00,0x2B,0x00], [0x0B,0xA0,0x40,0x30,0xC7,0x00], [0x0B,0x20,0xF0,0xC7,0xC7]]
+fusionGiveBallistamon = [TYPE_FUSION, True, [0x0B,0x20,0x00,0x2B,0xC7], [0x0B,0xA0,0x40,0xF0,0x67,0x00], [0x0B,0x20,0xF0,0xC7,0x67]]
+fusionTakeAgumon = [TYPE_FUSION, False, [0x0B,0x20,0x80,0xAB,0x00], [0x0B,0xA0,0xC0,0x40,0x5B,0x00], [0x0B,0x20,0x50,0x7B,0x5B]]
+fusionTakeAquilamon = [TYPE_FUSION, False, [0x0B,0x20,0x80,0xAB,0x00], [0x0B,0xA0,0xC0,0x30,0x27,0x00], [0x0B,0x20,0x50,0x7B,0x27]]
+fusionTakeBallistamon = [TYPE_FUSION, False, [0x0B,0x20,0x80,0xAB,0x00], [0x0B,0xA0,0xC0,0xF0,0xE7,0x00], [0x0B,0x20,0x50,0x7B,0xE7]]
+fusionTakeDigimonScan = fusionTakeAgumon[:4]
+fusionBattle1 = [TYPE_FUSION, True, [0x0B,0x88,0x20,0x80,0x80,0x00,0x00,0x00,0x40,0x40,0xC0,0x00,0x00,0x00,0x00,0x00,0x77,0x00]]
+fusionBattle2 = [TYPE_FUSION, False, [0x0B,0x88,0xA0,0x80,0x80,0x00,0x00,0x00,0x40,0x40,0xC0,0x00,0x00,0x00,0x00,0x00,0xF7,0x00]]
+
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(datalinkGive10Pt1st, True)
+	doComm(fusionBattle2, False)
