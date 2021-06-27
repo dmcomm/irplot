@@ -102,8 +102,9 @@ class Params:
 			self.stopPulseSend = 1300
 			self.stopPulseMax = 1400
 			self.stopGapSend = 400
-			self.stepTimeout_ns = 5_000_000
-			self.replyTimeout_ns = 12_000_000
+			self.replyTimeout_ms = 40
+			self.packetLengthTimeout_ms = 300
+			self.packetContinueTimeout_ms = 10
 		elif commType == TYPE_FUSION:
 			self.startPulseMin = 5000
 			self.startPulseSend = 5880
@@ -123,8 +124,9 @@ class Params:
 			self.stopPulseSend = 950
 			self.stopPulseMax = 1100
 			self.stopGapSend = 400
-			self.stepTimeout_ns = 5_000_000
-			self.replyTimeout_ns = 100_000_000
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 300
+			self.packetContinueTimeout_ms = 10
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -143,36 +145,62 @@ class FakePulsesIn:
 		self.cursor += 1
 		return x
 
-def waitPulse(pulsesIn, timeout_ns, position):
-	startTime = time.monotonic_ns()
-	while len(pulsesIn) == 0 and (timeout_ns is None or time.monotonic_ns() - startTime < timeout_ns):
-		pass
-	if len(pulsesIn) != 0:
-		t = pulsesIn.popleft()
-		logBuffer.appendNoError(t)
-		return t
-	elif position is None:
-		return None
-	else:
-		raise WaitEnded("%d" % position)
+def popPulse(pulsesIn, emptyErrorCode):
+	if len(pulsesIn) == 0:
+		raise WaitEnded(str(emptyErrorCode))
+	t = pulsesIn.popleft()
+	logBuffer.appendNoError(t)
+	return t
 
-def receivePacketModulated(pulsesIn, params, waitForStart_ns):
+def receivePacketModulated(pulsesIn, params, waitForStart_ms):
 	pulsesIn.clear()
 	pulsesIn.resume()
 	receivedBytes.clear()
-	if waitForStart_ns == WAIT_REPLY:
-		waitForStart_ns = params.replyTimeout_ns
+	packetLengthTimeout_10ms = (params.packetLengthTimeout_ms + 9) // 10
+	packetContinueTimeout_10ms = (params.packetContinueTimeout_ms + 9) // 10
+	print(packetContinueTimeout_10ms)
+	#wait for first pulse:
+	if waitForStart_ms == WAIT_REPLY:
+		waitForStart_ms = params.replyTimeout_ms
+	if waitForStart_ms is None:
+		while len(pulsesIn) == 0:
+			time.sleep(0.01)
+	else:
+		waitForStart_10ms = (waitForStart_ms + 9) // 10
+		while len(pulsesIn) == 0 and waitForStart_10ms > 0:
+			time.sleep(0.01)
+			waitForStart_10ms -= 1
+	if len(pulsesIn) == 0:
+		raise WaitEnded("nothing received")
+	#wait until the pulses stop or it takes too long:
+	sleepsSinceStart = 0
+	sleepsSincePrevPulse = 0
+	numPulsesPrev = 1
+	while True:
+		numPulses = len(pulsesIn)
+		if numPulses != numPulsesPrev:
+			numPulsesPrev = numPulses
+			sleepsSincePrevPulse = 0
+		if sleepsSincePrevPulse > packetContinueTimeout_10ms:
+			break
+		if sleepsSinceStart > packetLengthTimeout_10ms:
+			raise BadPacket("too long")
+		sleepsSinceStart += 1
+		sleepsSincePrevPulse += 1
+		time.sleep(0.01)
+	pulsesIn.pause()
+	#process the packet:
 	try:
-		t = waitPulse(pulsesIn, waitForStart_ns, -2)
+		t = popPulse(pulsesIn, -2)
 		if t < params.startPulseMin or t > params.startPulseMax:
 			raise BadPacket("start pulse = %d" % t)
-		t = waitPulse(pulsesIn, params.stepTimeout_ns, -1)
+		t = popPulse(pulsesIn, -1)
 		if t < params.startGapMin or t > params.startGapMax:
 			raise BadPacket("start gap = %d" % t)
 		currentByte = 0
 		bitCount = 0
 		while True:
-			t = waitPulse(pulsesIn, params.stepTimeout_ns, 2*bitCount+1)
+			t = popPulse(pulsesIn, 2*bitCount+1)
 			if t >= params.bitPulseMin and t <= params.bitPulseMax:
 				#normal pulse
 				pass
@@ -181,7 +209,7 @@ def receivePacketModulated(pulsesIn, params, waitForStart_ns):
 				break
 			else:
 				raise BadPacket("bit %d pulse = %d" % (bitCount, t))
-			t = waitPulse(pulsesIn, params.stepTimeout_ns, 2*bitCount+2)
+			t = popPulse(pulsesIn, 2*bitCount+2)
 			if t < params.bitGapMin or t > params.bitGapMax:
 				raise BadPacket("bit %d gap = %d" % (bitCount, t))
 			currentByte >>= 1
@@ -196,7 +224,6 @@ def receivePacketModulated(pulsesIn, params, waitForStart_ns):
 			#receivedBytes.appendNoError(currentByte)
 			raise BadPacket("bitCount = %d" % bitCount)
 	finally:
-		pulsesIn.pause()
 		logBuffer.appendNoError(0xFFFF)
 
 def sendPacketModulated(params, bytesToSend):
@@ -286,4 +313,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(fusionBattle2, False)
+	doComm(datalinkGive10Pt2nd, True)
