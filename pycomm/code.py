@@ -156,39 +156,38 @@ def receivePacketModulated(pulsesIn, params, waitForStart_ms):
 	pulsesIn.clear()
 	pulsesIn.resume()
 	receivedBytes.clear()
-	packetLengthTimeout_10ms = (params.packetLengthTimeout_ms + 9) // 10
-	packetContinueTimeout_10ms = (params.packetContinueTimeout_ms + 9) // 10
+	packetLengthTimeout_ns = params.packetLengthTimeout_ms * 1_000_000
+	packetContinueTimeout_ns = params.packetContinueTimeout_ms * 1_000_000
 	#wait for first pulse:
 	if waitForStart_ms == WAIT_REPLY:
 		waitForStart_ms = params.replyTimeout_ms
-	if waitForStart_ms is None:
+	if waitForStart_ms == WAIT_FOREVER:
 		while len(pulsesIn) == 0:
-			time.sleep(0.01)
+			pass
 	else:
-		waitForStart_10ms = (waitForStart_ms + 9) // 10
-		while len(pulsesIn) == 0 and waitForStart_10ms > 0:
-			time.sleep(0.01)
-			waitForStart_10ms -= 1
+		waitForStart_ns = waitForStart_ms * 1_000_000
+		timeStart = time.monotonic_ns()
+		while len(pulsesIn) == 0 and time.monotonic_ns() - timeStart < waitForStart_ns:
+			pass
 	if len(pulsesIn) == 0:
 		raise WaitEnded("nothing received")
 	#wait until the pulses stop or it takes too long:
-	sleepsSinceStart = 0
-	sleepsSincePrevPulse = 0
 	numPulsesPrev = 1
+	timeStart = time.monotonic_ns()
+	timePrevPulse = timeStart
 	while True:
 		numPulses = len(pulsesIn)
+		timeCurrent = time.monotonic_ns()
 		if numPulses != numPulsesPrev:
 			numPulsesPrev = numPulses
-			sleepsSincePrevPulse = 0
-		if sleepsSincePrevPulse > packetContinueTimeout_10ms:
+			timePrevPulse = timeCurrent
+		if timeCurrent - timePrevPulse > packetContinueTimeout_ns:
 			break
-		if sleepsSinceStart > packetLengthTimeout_10ms:
+		if timeCurrent - timeStart > packetLengthTimeout_ns:
 			raise BadPacket("too long")
-		sleepsSinceStart += 1
-		sleepsSincePrevPulse += 1
-		time.sleep(0.01)
 	pulsesIn.pause()
 	#process the packet:
+	#TODO: store timeStart-pulsesIn[0]?
 	try:
 		t = popPulse(pulsesIn, -2)
 		if t < params.startPulseMin or t > params.startPulseMax:
@@ -316,4 +315,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(fusionTakeDigimonScan, False)
+	doComm(fusionGiveDevimon, True)
