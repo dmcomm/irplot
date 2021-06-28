@@ -12,12 +12,13 @@ import pwmio
 
 TYPE_DATALINK = 0
 TYPE_FUSION = 1
+TYPE_IC = 2
 
 WAIT_FOREVER = None
 WAIT_REPLY = -1
 
-probePin = digitalio.DigitalInOut(board.GP8)
-probePin.direction = digitalio.Direction.OUTPUT
+#probePin = digitalio.DigitalInOut(board.GP8)
+#probePin.direction = digitalio.Direction.OUTPUT
 
 demodPulsesIn = pulseio.PulseIn(board.GP9, maxlen=300, idle_state=True)
 demodPulsesIn.pause()
@@ -32,7 +33,8 @@ pulseOut.send(array.array('H', [100, 100])) #workaround for bug?
 
 #GP12 used for LED joint
 
-#GP13 rawPulsesIn
+#rawPulsesIn = pulseio.PulseIn(board.GP13, maxlen=300, idle_state=True)
+#rawPulsesIn.pause()
 
 rawPower = digitalio.DigitalInOut(board.GP14)
 rawPower.direction = digitalio.Direction.OUTPUT
@@ -127,6 +129,10 @@ class Params:
 			self.replyTimeout_ms = 100
 			self.packetLengthTimeout_ms = 300
 			self.packetContinueTimeout_ms = 10
+		elif commType == TYPE_IC:
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 30
+			self.pulseMax = 25
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -152,28 +158,76 @@ def popPulse(pulsesIn, emptyErrorCode):
 	logBuffer.appendNoError(t)
 	return t
 
+def waitForStart(pulsesIn, params, wait_ms):
+	if wait_ms == WAIT_REPLY:
+		wait_ms = params.replyTimeout_ms
+	if wait_ms == WAIT_FOREVER:
+		while len(pulsesIn) == 0:
+			pass
+	else:
+		wait_ns = wait_ms * 1_000_000
+		timeStart = time.monotonic_ns()
+		while len(pulsesIn) == 0 and time.monotonic_ns() - timeStart < wait_ns:
+			pass
+	if len(pulsesIn) == 0:
+		pulsesIn.pause()
+		raise WaitEnded("nothing received")
+
+def receivePacket_iC(pulsesIn, params, waitForStart_ms):
+	pulsesIn.clear()
+	pulsesIn.resume()
+	receivedBytes.clear()
+	waitForStart(pulsesIn, params, waitForStart_ms)
+	#TODO: store time?
+	time.sleep(params.packetLengthTimeout_ms / 1000)
+	pulsesIn.pause()
+	currentByte = 0
+	pulseCount = 0
+	ticksIntoByte = 0
+	ended = False
+	while not ended:
+		pulseCount += 1
+		if len(pulsesIn) == 0:
+			raise BadPacket("ended with gap")
+		tPulse = pulsesIn.popleft()
+		logBuffer.appendNoError(tPulse)
+		if tPulse > params.pulseMax:
+			raise BadPacket("pulse %d = %d" % (pulseCount, tPulse))
+		if len(pulsesIn) != 0:
+			tGap = pulsesIn.popleft()
+		else:
+			tGap = 0xFFFF
+			ended = True
+		logBuffer.appendNoError(tGap)
+		dur = tPulse + tGap
+		ticks = round(dur / 100)
+		dur100 = ticks * 100
+		off100 = abs(dur - dur100)
+		if ticksIntoByte + ticks >= 9:
+			#finish byte
+			for i in range(8 - ticksIntoByte):
+				currentByte >>= 1
+				currentByte |= 0x80
+			receivedBytes.append(currentByte)
+			currentByte = 0
+			ticksIntoByte = 0
+		elif off100 > 30:
+			raise BadPacket("pulse+gap %d = %d" % (pulseCount, dur))
+		else:
+			for i in range(ticks - 1):
+				currentByte >>= 1
+				currentByte |= 0x80
+			currentByte >>= 1
+			ticksIntoByte += ticks
+
 def receivePacketModulated(pulsesIn, params, waitForStart_ms):
-	probePin.value = True
 	pulsesIn.clear()
 	pulsesIn.resume()
 	receivedBytes.clear()
 	packetLengthTimeout_ns = params.packetLengthTimeout_ms * 1_000_000
 	packetContinueTimeout_ns = params.packetContinueTimeout_ms * 1_000_000
 	#wait for first pulse:
-	if waitForStart_ms == WAIT_REPLY:
-		waitForStart_ms = params.replyTimeout_ms
-	if waitForStart_ms == WAIT_FOREVER:
-		while len(pulsesIn) == 0:
-			pass
-	else:
-		waitForStart_ns = waitForStart_ms * 1_000_000
-		timeStart = time.monotonic_ns()
-		while len(pulsesIn) == 0 and time.monotonic_ns() - timeStart < waitForStart_ns:
-			pass
-	probePin.value = False
-	if len(pulsesIn) == 0:
-		pulsesIn.pause()
-		raise WaitEnded("nothing received")
+	waitForStart(pulsesIn, params, waitForStart_ms)
 	#wait until the pulses stop or it takes too long:
 	numPulsesPrev = 1
 	timeStart = time.monotonic_ns()
@@ -265,6 +319,11 @@ def doComm(sequence, printLog):
 			sendPacketModulated(params, packet)
 		def receivePacket(w):
 			receivePacketModulated(demodPulsesIn, params, w)
+	elif commType == TYPE_IC:
+		def sendPacket(packet):
+			pass
+		def receivePacket(w):
+			receivePacket_iC(rawPulsesIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -323,8 +382,10 @@ fusionBattle1stC = [TYPE_FUSION, True, [0x0B,0x88,0x20,0x80,0x80,0x00,0x00,0x00,
 fusionBattle1stD = [TYPE_FUSION, True, [0x0B,0x88,0x20,0x80,0x80,0x00,0x00,0x00,0xF0,0x8C,0x51,0x00,0x00,0x00,0x00,0x00,0x8D],
 [0x0B,0x90,0x60,0x00,0x00,0x00,0x00,0x00,0xFB], [0x0B,0x20,0xF0,0xC7]] #Ballistamon/Dorulumon/Starmons (nothing interesting), computer loses
 
+icListen = [TYPE_IC, False]
+
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(fusionBattle1stD, True)
+	doComm(datalinkGive10Pt2nd, True)
