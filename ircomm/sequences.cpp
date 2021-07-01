@@ -94,7 +94,7 @@ void SequenceHandler::list(Stream& output) {
     for (i = 0; i < numSequences; i ++) {
         output.write('a' + i);
         output.write(' ');
-        seqStrPGM = pgm_read_ptr_near(sequences + i);
+        seqStrPGM = (uint16_t *) pgm_read_ptr_near(sequences + i);
         while (pgm_read_word_near(seqStrPGM) != END) {
             output.write(pgm_read_word_near(seqStrPGM));
             seqStrPGM ++;
@@ -109,7 +109,7 @@ int8_t SequenceHandler::load(uint8_t id) {
     if (i < 0 || i >= numSequences) {
         return -1;
     }
-    cursorPGM = pgm_read_ptr_near(sequences + i);
+    cursorPGM = (uint16_t *) pgm_read_ptr_near(sequences + i);
     while (pgm_read_word_near(cursorPGM) != END) {
         //skip description
         cursorPGM ++;

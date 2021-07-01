@@ -2,10 +2,10 @@
 
 #include "ircomm.h"
 
-const byte pinIrLed = 6;
-const byte pinInputBasic = 3;
-const byte pinInputDemod = 8;
-const byte pinProbe = 2;
+const byte pinIrLed = 11;
+const byte pinInputBasic = 16;
+const byte pinInputDemod = 9;
+const byte pinProbe = 0;
 
 const int32_t replyTimeout = 20000;
 const int32_t initialTimeout = 5000000;
