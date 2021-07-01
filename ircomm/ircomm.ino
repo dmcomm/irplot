@@ -49,9 +49,21 @@ void addLogItem(uint16_t item) {
     }
 }
 
+void delaySincePrev(uint32_t dur) {
+    static uint32_t prev = 0;
+    uint32_t curr;
+    while (true) {
+        curr = micros();
+        if (curr - prev >= dur) {
+            prev = curr;
+            return;
+        }
+    }
+}
+
 void outputPulse(uint16_t t) {
     digitalWrite(pinIrLed, HIGH);
-    delayMicroseconds(t);
+    delaySincePrev(t);
     digitalWrite(pinIrLed, LOW);
 }
 
@@ -64,11 +76,11 @@ void outputModulated(uint16_t t) {
     }
     for (uint16_t pulse = 0; pulse < pulses; pulse ++) {
         digitalWrite(pinIrLed, HIGH);
-        delayMicroseconds(7);
+        delaySincePrev(13);
         digitalWrite(pinIrLed, LOW);
-        delayMicroseconds(7);
+        delaySincePrev(13);
     }
-    //TODO Take into account the time spent not waiting. Or use PWM.
+    //TODO could get it more accurate with PWM.
 }
 
 int32_t waitLevel(uint8_t pin, uint8_t level, int32_t timeoutMicros) {
@@ -136,6 +148,7 @@ void execute() {
             return;
         }
     }
+    delaySincePrev(0);
     while (true) {
         item = sequenceHandler.get(cursor);
         if (item == END) {
@@ -143,15 +156,16 @@ void execute() {
         }
         if (item == WAIT) {
             digitalWrite(pinProbe, HIGH);
-            delayMicroseconds(5);
+            delaySincePrev(5);
             digitalWrite(pinProbe, LOW);
             wasOn = false;
             if (receivePacket(false) == -1) {
                 return;
             }
+            delaySincePrev(0);
         } else {
             if (wasOn) {
-                delayMicroseconds(item);
+                delaySincePrev(item);
                 wasOn = false;
             } else if (sequenceHandler.isModulated) {
                 outputModulated(item);
@@ -170,7 +184,7 @@ void loop() {
     uint16_t cursor;
     if (Serial.available()) {
         b = Serial.read();
-        if (b == '\n') {
+        if (b == '\r' || b == '\n') {
             //do nothing
         } else if (sequenceHandler.load(b) == 0) {
             execute();

@@ -72,6 +72,9 @@ const uint16_t icWhaLila2[] PROGMEM = {'i','C','b',END, false,true,2000,
     20,76,20,92,20,76,20,76,20,444,20,92,20,76,20,76,20,76,20,76,20,300,20,252,20,92,20,172,20,396,20,348,20,396,20,188,
     20,188,20,236,20,188,20,76,20,76,20,76,20,92,WAIT,END};
 
+const uint16_t xrosTrade1st[] PROGMEM = {'X','T','1',END, false,true,2000,
+    27,6,30,6,12,6,12,6,12,6,12,6,50,WAIT,END};
+
 const uint16_t * const sequences[] PROGMEM = {
     icWait,
     modWait,
@@ -80,6 +83,7 @@ const uint16_t * const sequences[] PROGMEM = {
     datalinkGive10pt2nd,
     datalinkTakePt2nd,
     icWhaLila2,
+    xrosTrade1st,
 };
 
 constexpr int8_t numSequences = sizeof(sequences) / sizeof(sequences[0]);
