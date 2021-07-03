@@ -2,16 +2,16 @@
  * This file is part of the DMComm project by BladeSabre. License: MIT.
  *
  * Pi Pico with two TSMP58000 (each with a 4K7 pullup resistor):
- * sensor "A" on pins 12-14 facing outwards, "B" on pins 15-17 facing inwards.
+ * sensor "A" on pins 17-19 facing outwards, "B" on pins 22-24 facing outwards.
  * Triggers on channel A falling, records falling edges on the two channels,
  * and outputs JSON for irplot.js . However there is too much crossover.
+ * With this type of sensor, seems it's better to use only one of them.
  */
 
-const byte pinCHA = 9;
-const byte pinExtraPowerA = 10;
-const byte pinExtraPowerB = 11;
-const byte pinExtraGroundB = 12;
-const byte pinCHB = 13;
+const byte pinCHA = 13;
+const byte pinExtraPowerA = 14;
+const byte pinCHB = 17;
+const byte pinExtraPowerB = 18;
 const uint32_t timeoutA = 500000;
 const uint32_t bufSize = 5000;
 
@@ -28,8 +28,6 @@ void setup() {
     digitalWrite(pinExtraPowerA, HIGH);
     pinMode(pinExtraPowerB, OUTPUT);
     digitalWrite(pinExtraPowerB, HIGH);
-    pinMode(pinExtraGroundB, OUTPUT);
-    digitalWrite(pinExtraGroundB, LOW);
     pinMode(LED_BUILTIN, OUTPUT);
 }
 
