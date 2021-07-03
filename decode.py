@@ -83,9 +83,13 @@ class iC_decoder:
         self.pulses = 0
     def endPacket(self):
         self.dashes.append("\n")
-        self.bytes = self.bytes[14:-1]
+        if len(self.bytes) > 2 and self.bytes[-2] == 0xC1 and self.bytes[-1] == 0xFF:
+            removeFromEnd = 2
+        else:
+            removeFromEnd = 1
+        self.bytes = self.bytes[14:-removeFromEnd]
         if self.cropHex:
-            self.hexdigits = self.hexdigits[14:-1]
+            self.hexdigits = self.hexdigits[14:-removeFromEnd]
         if self.reverseHex:
             self.hexdigits.reverse()
         hexstr = " ".join(self.hexdigits)
@@ -102,8 +106,10 @@ class iC_decoder:
                     self.checked.append("%04X autofix " % dataFixed + hexstr)
                 else:
                     self.checked.append("chkfail " + hexstr)
-        else:
+        elif len(hexstr) <= 59:
             self.checked.append("error " + hexstr)
+        else:
+            self.checked.append("error " + hexstr[:59] + " ...")
         self.hexdigits = []
         self.bytes = []
         self.currentByte = 0
@@ -153,6 +159,12 @@ if __name__ == "__main__":
         decoder = iC_decoder()
         with open("irdata.json") as f:
             for item in json.load(f)["data"]:
-                print(item["id"], end="\t")
-                decodeAndPrint(item["A"], sys.argv[1], "\t")
-                decodeAndPrint(item["B"], sys.argv[1], "\n")
+                decodeType = item.get("decode", "")
+                if decodeType == "ic" or (decodeType == "ics" and sys.argv[1] != "checked"):
+                    print(item["id"], end="\t")
+                    if "B" in item:
+                        decodeAndPrint(item["A"], sys.argv[1], "\t")
+                        print("B:", end="\t")
+                        decodeAndPrint(item["B"], sys.argv[1], "\n")
+                    else:
+                        decodeAndPrint(item["A"], sys.argv[1], "\n")

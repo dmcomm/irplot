@@ -16,7 +16,7 @@ function LineMaker(height, yStep) {
                 values.push({name: name, x: x, y: y + height});
             } else {
                 values.push({name: name, x: x, y: y});
-                if (decode === "ic" && x - prevXtoOn > 1000) {
+                if ((decode === "ic" || decode === "ics") && x - prevXtoOn > 860) {
                     for (let j = 1; j <= 8; j ++) {
                         markers.push({x: x + 100*j, y: y + height/2});
                     }
