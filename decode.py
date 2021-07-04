@@ -1,7 +1,11 @@
 
 import json, sys
 
-def checksum(x):
+LONG_GAP = -1
+BYTE_ERROR = -2
+
+#calculate the 16 redundancy bits for 16 bits of data
+def redundancyBits(x):
     result = 0x79B4
     mask = 0x19D8
     for i in range(16):
@@ -15,7 +19,7 @@ def checksum(x):
 
 #if a single bit 1->0 will fix it, return fixed data, else None
 def autofix(data, chk):
-    chkOfData = checksum(data)
+    chkOfData = redundancyBits(data)
     if chkOfData == chk:
         return data
     mask = 0x0001
@@ -24,37 +28,14 @@ def autofix(data, chk):
         chk2 = chk & ~mask
         if chkOfData == chk2:
             return data
-        if checksum(data2) == chk:
+        if redundancyBits(data2) == chk:
             return data2
         mask <<= 1
     return None
 
-#7D E0 -> C0, 7D E1 -> C1, 7D by itself is an error
-def byteReplace(bytes):
-    result = []
-    got7D = False
-    for b in bytes:
-        if got7D:
-            if b == 0xE0:
-                result.append(0xC0)
-                got7D = False
-            elif b == 0xE1:
-                result.append(0xC1)
-                got7D = False
-            else:
-                result.append(None)
-        elif b == 0x7D:
-            got7D = True
-        else:
-            result.append(b)
-    return result
-
 class iC_decoder:
     def reset(self):
         self.dashes = []
-        self.hexpackets = []
-        self.hexdigits = []
-        self.checked = []
         self.bytes = []
         self.currentByte = 0
         self.pulses = 0
@@ -71,52 +52,20 @@ class iC_decoder:
         for i in range(8 - self.pulses):
             self.addNonPulse()
         self.dashes.append(" ")
-        self.hexdigits.append("%02X" % self.currentByte)
         self.bytes.append(self.currentByte)
         self.currentByte = 0
         self.pulses = 0
     def abortByte(self):
         self.dashes.append("x ")
-        self.hexdigits.append("?")
-        self.bytes.append(None)
+        self.bytes.append(BYTE_ERROR)
         self.currentByte = 0
         self.pulses = 0
-    def endPacket(self):
+    def longGap(self):
         self.dashes.append("\n")
-        if len(self.bytes) > 2 and self.bytes[-2] == 0xC1 and self.bytes[-1] == 0xFF:
-            removeFromEnd = 2
-        else:
-            removeFromEnd = 1
-        self.bytes = self.bytes[14:-removeFromEnd]
-        if self.cropHex:
-            self.hexdigits = self.hexdigits[14:-removeFromEnd]
-        if self.reverseHex:
-            self.hexdigits.reverse()
-        hexstr = " ".join(self.hexdigits)
-        self.hexpackets.append(hexstr)
-        bytes2 = byteReplace(self.bytes)
-        if len(bytes2) == 4 and None not in bytes2:
-            data = bytes2[1] << 8 | bytes2[0]
-            chkGiven = bytes2[3] << 8 | bytes2[2]
-            if chkGiven == checksum(data):
-                self.checked.append("%04X" % data)
-            else:
-                dataFixed = autofix(data, chkGiven)
-                if dataFixed is not None:
-                    self.checked.append("%04X autofix " % dataFixed + hexstr)
-                else:
-                    self.checked.append("chkfail " + hexstr)
-        elif len(hexstr) <= 59:
-            self.checked.append("error " + hexstr)
-        else:
-            self.checked.append("error " + hexstr[:59] + " ...")
-        self.hexdigits = []
-        self.bytes = []
+        self.bytes.append(LONG_GAP)
         self.currentByte = 0
         self.pulses = 0
-    def decode(self, durations, cropHex=False, reverseHex=False):
-        self.cropHex = cropHex
-        self.reverseHex = reverseHex
+    def decode(self, durations):
         self.reset()
         for dur in durations[1:]:
             ticks = round(dur / 100)
@@ -131,36 +80,109 @@ class iC_decoder:
                     self.addNonPulse()
                 self.addPulse()
             if dur > 15000:
-                self.endPacket()
+                self.longGap()
         self.endByte()
-        self.endPacket()
     def getDiagram(self):
         return "".join(self.dashes)
+    def getBytes(self):
+        return self.bytes
     def getHex(self):
-        return "\t".join(self.hexpackets)
-    def getChecked(self):
-        return "\t".join(self.checked)
+        def f(b):
+            if b == BYTE_ERROR:
+                return "??"
+            elif b == LONG_GAP:
+                return "....."
+            else:
+                return "%02X" % b
+        return " ".join(f(b) for b in self.bytes)
+
+class iC_decoder_step2:
+    def __init__(self):
+        self.startSequence = [0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70]
+    def reset(self):
+        self.result = []
+        self.startPacket()
+    def startPacket(self):
+        self.packetCursor = -1
+        self.packetBytes = []
+        self.packetBytesRaw = []
+        self.got7D = False
+    def abortPacket(self):
+        if len(self.result) > 0 and self.result[-1].startswith("?"):
+            self.result[-1] = self.result[-1] + "?"
+        else:
+            self.result.append("?")
+        self.startPacket()
+    def endPacket(self):
+        hexstr = " ".join("%02X" % b for b in self.packetBytesRaw)
+        if len(self.packetBytes) == 4 and None not in self.packetBytes:
+            data = self.packetBytes[1] << 8 | self.packetBytes[0]
+            chkGiven = self.packetBytes[3] << 8 | self.packetBytes[2]
+            if chkGiven == redundancyBits(data):
+                self.result.append("%04X" % data)
+            else:
+                dataFixed = autofix(data, chkGiven)
+                if dataFixed is not None:
+                    self.result.append("%04X autofix " % dataFixed + hexstr)
+                else:
+                    self.result.append("chkfail " + hexstr)
+        else:
+            self.result.append("error " + hexstr)
+        self.startPacket()
+    def processByte(self, b):
+        self.packetCursor += 1
+        if b == BYTE_ERROR:
+            self.abortPacket()
+        elif self.packetCursor == 0 and b in [LONG_GAP, 0xFF]:
+            self.packetCursor -= 1
+        elif self.packetCursor < 14:
+            if b != self.startSequence[self.packetCursor]:
+                self.abortPacket()
+        else:
+            self.packetBytesRaw.append(b)
+            if self.got7D:
+                #7D E0 -> C0, 7D E1 -> C1, 7D by itself is an error
+                if b == 0xE0:
+                    self.packetBytes.append(0xC0)
+                    self.got7D = False
+                elif b == 0xE1:
+                    self.packetBytes.append(0xC1)
+                    self.got7D = False
+                else:
+                    self.packetBytes.append(None)
+            elif b == 0x7D:
+                self.got7D = True
+            elif b == 0xC1 or b == LONG_GAP:
+                self.endPacket()
+            else:
+                self.packetBytes.append(b)
+    def decode(self, bytes):
+        self.reset()
+        for b in bytes:
+            self.processByte(b)
+    def getHex(self):
+        return "\t".join(x for x in self.result)
 
 def decodeAndPrint(durations, mode, end):
+    decoder.decode(durations)
     if mode == "dashes":
-        decoder.decode(durations, cropHex=False)
         print(decoder.getDiagram(), end=end)
     elif mode == "full":
-        decoder.decode(durations, cropHex=False)
         print(decoder.getHex(), end=end)
     else:
-        decoder.decode(durations, cropHex=True)
-        print(decoder.getChecked(), end=end)
+        decoder2.decode(decoder.getBytes())
+        print(decoder2.getHex(), end=end)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in ["dashes", "full", "checked"]:
         print("dashes/full/checked?")
     else:
         decoder = iC_decoder()
+        decoder2 = iC_decoder_step2()
         with open("irdata.json") as f:
             for item in json.load(f)["data"]:
                 decodeType = item.get("decode", "")
-                if decodeType == "ic" or (decodeType == "ics" and sys.argv[1] != "checked"):
+                if decodeType == "ic" or decodeType == "ics":
                     print(item["id"], end="\t")
                     if "B" in item:
                         decodeAndPrint(item["A"], sys.argv[1], "\t")
