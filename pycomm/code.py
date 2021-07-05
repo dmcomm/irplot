@@ -1,7 +1,7 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
 #Some Data Link and Fusion Loader interaction.
-#Tested with CircuitPython 20210625-769805c on Pi Pico.
+#Tested with CircuitPython 20210703-cece649 on Pi Pico.
 
 import array
 import board
@@ -17,28 +17,34 @@ TYPE_IC = 2
 WAIT_FOREVER = None
 WAIT_REPLY = -1
 
-#probePin = digitalio.DigitalInOut(board.GP8)
-#probePin.direction = digitalio.Direction.OUTPUT
+pinProbe = board.GP0
+pinIRLED = board.GP7  #GP8 reserved for LED-resistor joint
+pinDemodIn = board.GP5
+pinRawIn = board.GP9
+pinXrosLED = board.GP14
+pinXrosIn = board.GP16
+pinsExtraPower = [board.GP6, board.GP10, board.GP17]
 
-demodPulsesIn = pulseio.PulseIn(board.GP9, maxlen=300, idle_state=True)
+extraPowerOut = []
+for pin in pinsExtraPower:
+	io = digitalio.DigitalInOut(pin)
+	io.direction = digitalio.Direction.OUTPUT
+	io.value = True
+	extraPowerOut.append(io)
+
+probeOut = digitalio.DigitalInOut(pinProbe)
+probeOut.direction = digitalio.Direction.OUTPUT
+
+demodPulsesIn = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
 demodPulsesIn.pause()
 
-demodPower = digitalio.DigitalInOut(board.GP10)
-demodPower.direction = digitalio.Direction.OUTPUT
-demodPower.value = True
-
-pwm = pwmio.PWMOut(board.GP11, frequency=38000, duty_cycle=2**15)
+pwm = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
 pulseOut = pulseio.PulseOut(pwm)
 pulseOut.send(array.array('H', [100, 100])) #workaround for bug?
 
-#GP12 used for LED joint
-
 #rawPulsesIn = pulseio.PulseIn(board.GP13, maxlen=300, idle_state=True)
 #rawPulsesIn.pause()
-
-rawPower = digitalio.DigitalInOut(board.GP14)
-rawPower.direction = digitalio.Direction.OUTPUT
-rawPower.value = True
+#it crashes if we have 2 of these
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
