@@ -17,7 +17,8 @@ TYPE_IC = 2
 WAIT_FOREVER = None
 WAIT_REPLY = -1
 
-pinProbe = board.GP0
+pinProbeOut = board.GP0
+pinProbeIn = board.GP1
 pinIRLED = board.GP7  #GP8 reserved for LED-resistor joint
 pinDemodIn = board.GP5
 pinRawIn = board.GP9
@@ -32,19 +33,8 @@ for pin in pinsExtraPower:
 	io.value = True
 	extraPowerOut.append(io)
 
-probeOut = digitalio.DigitalInOut(pinProbe)
-probeOut.direction = digitalio.Direction.OUTPUT
-
-demodPulsesIn = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
-demodPulsesIn.pause()
-
-pwm = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
-pulseOut = pulseio.PulseOut(pwm)
-pulseOut.send(array.array('H', [100, 100])) #workaround for bug?
-
-#rawPulsesIn = pulseio.PulseIn(board.GP13, maxlen=300, idle_state=True)
-#rawPulsesIn.pause()
-#it crashes if we have 2 of these
+#probeOut = digitalio.DigitalInOut(pinProbeOut)
+#probeOut.direction = digitalio.Direction.OUTPUT
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -77,11 +67,6 @@ class Buffer:
 
 logBuffer = Buffer(2000, "L")
 receivedBytes = Buffer(30, "B")
-
-arraysToSend = {}
-for numBytes in [4, 5, 8, 9, 12, 17]:
-	theLength = numBytes * 16 + 4
-	arraysToSend[theLength] = array.array('H', range(theLength))
 
 class WaitEnded(Exception):
 	pass
@@ -288,9 +273,13 @@ def receivePacketModulated(pulsesIn, params, waitForStart_ms):
 	finally:
 		logBuffer.appendNoError(0xFFFF)
 
-def sendPacketModulated(params, bytesToSend):
+def sendPacketModulated(pulseOut, params, bytesToSend):
 	pulseOutLength = len(bytesToSend) * 16 + 4
-	arrayToSend = arraysToSend[pulseOutLength]
+	arrayToSend = array.array("H")
+	for i in range(pulseOutLength):
+		arrayToSend.append(0)
+		#This function would be simpler if we append as we go along,
+		#but still hoping for a fix that allows reuse of the array.
 	arrayToSend[0] = params.startPulseSend
 	arrayToSend[1] = params.startGapSend
 	bufCursor = 2
@@ -320,16 +309,27 @@ def doComm(sequence, printLog):
 	goFirst = sequence[1]
 	packetsToSend = sequence[2:]
 	params = Params(commType)
+	pwmOut = None
+	pulseOut = None
+	pulseIn = None
 	if commType == TYPE_DATALINK or commType == TYPE_FUSION:
+		pwmOut = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
+		pulseOut = pulseio.PulseOut(pwmOut)
+		pulseIn = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
+		pulseIn.pause()
+		if not goFirst:
+			pulseOut.send(array.array('H', [100, 100])) #workaround for bug
 		def sendPacket(packet):
-			sendPacketModulated(params, packet)
+			sendPacketModulated(pulseOut, params, packet)
 		def receivePacket(w):
-			receivePacketModulated(demodPulsesIn, params, w)
+			receivePacketModulated(pulseIn, params, w)
 	elif commType == TYPE_IC:
+		pulseIn = pulseio.PulseIn(pinRawIn, maxlen=300, idle_state=True)
+		pulseIn.pause()
 		def sendPacket(packet):
 			pass
 		def receivePacket(w):
-			receivePacket_iC(rawPulsesIn, params, w)
+			receivePacket_iC(pulseIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -344,6 +344,13 @@ def doComm(sequence, printLog):
 		print(repr(e))
 	except WaitEnded as e:
 		print(repr(e))
+	finally:
+		if pulseOut is not None:
+			pulseOut.deinit()
+		if pwmOut is not None:
+			pwmOut.deinit()
+		if pulseIn is not None:
+			pulseIn.deinit()
 	if printLog:
 		for i in range(len(logBuffer)):
 			print(logBuffer[i], end=",")
