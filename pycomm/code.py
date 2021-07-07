@@ -1,6 +1,6 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
-#Some Data Link and Fusion Loader interaction.
+#Some iC, Data Link and Fusion Loader interaction.
 #Tested with CircuitPython 20210703-cece649 on Pi Pico.
 
 import array
@@ -9,6 +9,8 @@ import time
 import digitalio
 import pulseio
 import pwmio
+import rp2pio
+import adafruit_pioasm
 
 TYPE_DATALINK = 0
 TYPE_FUSION = 1
@@ -35,6 +37,20 @@ for pin in pinsExtraPower:
 
 #probeOut = digitalio.DigitalInOut(pinProbeOut)
 #probeOut.direction = digitalio.Direction.OUTPUT
+
+iC_TX_ASM = """
+.program ictx
+	pull
+	mov osr ~ osr
+	set pins 1
+	set pins 0 [8]
+""" + ("""
+	out pins 1
+	set pins 0 [8]
+""" * 8) + """
+	nop [7]
+"""
+iC_TX_PIO = adafruit_pioasm.assemble(iC_TX_ASM)
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -312,6 +328,8 @@ def doComm(sequence, printLog):
 	pwmOut = None
 	pulseOut = None
 	pulseIn = None
+	pioOut = None
+	pioIn = None
 	if commType == TYPE_DATALINK or commType == TYPE_FUSION:
 		pwmOut = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
 		pulseOut = pulseio.PulseOut(pwmOut)
@@ -326,8 +344,14 @@ def doComm(sequence, printLog):
 	elif commType == TYPE_IC:
 		pulseIn = pulseio.PulseIn(pinRawIn, maxlen=300, idle_state=True)
 		pulseIn.pause()
+		pioOut = rp2pio.StateMachine(
+			iC_TX_PIO,
+			frequency=100000,
+			first_out_pin=pinIRLED,
+			first_set_pin=pinIRLED,
+		)
 		def sendPacket(packet):
-			pass
+			pioOut.write(bytes(packet))
 		def receivePacket(w):
 			receivePacket_iC(pulseIn, params, w)
 	else:
@@ -351,6 +375,10 @@ def doComm(sequence, printLog):
 			pwmOut.deinit()
 		if pulseIn is not None:
 			pulseIn.deinit()
+		if pioOut is not None:
+			pioOut.deinit()
+		if pioIn is not None:
+			pioIn.deinit()
 	if printLog:
 		for i in range(len(logBuffer)):
 			print(logBuffer[i], end=",")
@@ -396,9 +424,16 @@ fusionBattle1stD = [TYPE_FUSION, True, [0x0B,0x88,0x20,0x80,0x80,0x00,0x00,0x00,
 [0x0B,0x90,0x60,0x00,0x00,0x00,0x00,0x00,0xFB], [0x0B,0x20,0xF0,0xC7]] #Ballistamon/Dorulumon/Starmons (nothing interesting), computer loses
 
 icListen = [TYPE_IC, False]
+icTest = [TYPE_IC, True, [0x00,0xFF,0x01,0x80]]
+icGaoChu3 = [TYPE_IC, True,
+	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0x67,0x7D,0xE0,0xE5,0x97,0xC1],
+	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0x57,0x42,0x5D,0x86,0xC1],
+	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0x97,0x01,0x68,0x3C,0xC1],
+	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0x07,0x00,0xBC,0x34,0xC1],
+	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0xC7,0x81,0x97,0x6B,0xC1]]
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(datalinkGive10Pt2nd, True)
+	doComm(icGaoChu3, True)
