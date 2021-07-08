@@ -21,12 +21,11 @@ WAIT_REPLY = -1
 
 pinProbeOut = board.GP0
 pinProbeIn = board.GP1
-pinIRLED = board.GP7  #GP8 reserved for LED-resistor joint
-pinDemodIn = board.GP5
-pinRawIn = board.GP9
-pinXrosLED = board.GP14
-pinXrosIn = board.GP16
-pinsExtraPower = [board.GP6, board.GP10, board.GP17]
+pinIRLED = board.GP16
+pinDemodIn = board.GP17
+pinRawIn = board.GP14
+pinXrosIn = board.GP12
+pinsExtraPower = [board.GP13, board.GP18]
 
 extraPowerOut = []
 for pin in pinsExtraPower:
@@ -436,4 +435,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(icGaoChu3, True)
+	doComm(datalinkGive10Pt1st, True)
