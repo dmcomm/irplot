@@ -15,6 +15,8 @@ import adafruit_pioasm
 TYPE_DATALINK = 0
 TYPE_FUSION = 1
 TYPE_IC = 2
+TYPE_XROS = 3
+TYPE_XROSLINK = 4
 
 WAIT_FOREVER = None
 WAIT_REPLY = -1
@@ -139,6 +141,9 @@ class Params:
 			self.replyTimeout_ms = 100
 			self.packetLengthTimeout_ms = 30
 			self.pulseMax = 25
+		elif commType == TYPE_XROSLINK:
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 10
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -178,6 +183,15 @@ def waitForStart(pulsesIn, params, wait_ms):
 	if len(pulsesIn) == 0:
 		pulsesIn.pause()
 		raise WaitEnded("nothing received")
+
+def receiveDurs(pulseIn, params, waitForStart_ms):
+	pulseIn.clear()
+	pulseIn.resume()
+	receivedBytes.clear()
+	waitForStart(pulseIn, params, waitForStart_ms)
+	time.sleep(params.packetLengthTimeout_ms / 1000)
+	while True:
+		popPulse(pulseIn, "done")
 
 def receivePacket_iC(pulsesIn, params, waitForStart_ms):
 	pulsesIn.clear()
@@ -353,6 +367,17 @@ def doComm(sequence, printLog):
 			pioOut.write(bytes(packet))
 		def receivePacket(w):
 			receivePacket_iC(pulseIn, params, w)
+	elif commType == TYPE_XROSLINK:
+		pulseIn = pulseio.PulseIn(pinXrosIn, maxlen=300, idle_state=True)
+		pulseIn.pause()
+		pwmOut = pwmio.PWMOut(pinIRLED, frequency=100000, duty_cycle=0xFFFF)
+		pulseOut = pulseio.PulseOut(pwmOut)
+		if not goFirst:
+			pulseOut.send(array.array('H', [100, 100])) #workaround for bug
+		def sendPacket(packet):
+			pulseOut.send(packet)
+		def receivePacket(w):
+			receiveDurs(pulseIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -431,8 +456,12 @@ icGaoChu3 = [TYPE_IC, True,
 	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0x07,0x00,0xBC,0x34,0xC1],
 	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0xC7,0x81,0x97,0x6B,0xC1]]
 
+xroslinkListen = [TYPE_XROSLINK, False]
+xroslink1 = [TYPE_XROSLINK, True, array.array("H", [70,730,50,750,50,350,50,350,50,350,50,350,50,100])]
+#Should be 50,750... but that crashes. Even like this, first pulse coming out much longer than 70 in reality.
+
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(datalinkGive10Pt1st, True)
+	doComm(xroslinkListen, True)
