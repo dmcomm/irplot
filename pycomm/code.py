@@ -27,6 +27,9 @@ pinIRLED = board.GP16
 pinDemodIn = board.GP17
 pinRawIn = board.GP14
 pinXrosIn = board.GP12
+pinProngDrive = board.GP19  #GP19 for high, GP20 for low (implied)
+pinProngWeakPull = board.GP21
+pinProngIn = board.GP26  #ADC0
 pinsExtraPower = [board.GP13, board.GP18]
 
 extraPowerOut = []
@@ -49,9 +52,32 @@ iC_TX_ASM = """
 	out pins 1
 	set pins 0 [8]
 """ * 8) + """
-	nop [7]
+	nop [12]
 """
 iC_TX_PIO = adafruit_pioasm.assemble(iC_TX_ASM)
+
+#guessing wildly about the bit mapping:
+xros_TX_ASM = """
+.program xrostx
+	pull
+	set pins 1 [1]
+""" + ("""
+	out pins 1
+	set pins 1 [1]
+""" * 8) + """
+	nop [5]
+	set pins 0
+"""
+xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
+
+xros_RX_ASM = """
+.program xrosrx
+	wait 0 pin 0
+loop:
+	in pins 1
+	jmp loop
+"""
+xros_RX_PIO = adafruit_pioasm.assemble(xros_RX_ASM)
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -149,6 +175,8 @@ class Params:
 			self.pulseMax = 80
 			self.tickLength = 400
 			self.tickMargin = 100
+		elif commType == TYPE_XROS:
+			self.replyTimeout_ms = 30
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -188,6 +216,30 @@ def waitForStart(pulsesIn, params, wait_ms):
 	if len(pulsesIn) == 0:
 		pulsesIn.pause()
 		raise WaitEnded("nothing received")
+
+def receivePacketXros(pioIn, params, wait_ms):
+	numWords = 4
+	pioIn.restart()
+	pioIn.clear_rxfifo()
+	if wait_ms == WAIT_REPLY:
+		wait_ms = params.replyTimeout_ms
+	if wait_ms == WAIT_FOREVER:
+		while pioIn.in_waiting < numWords:
+			pass
+	else:
+		wait_ns = wait_ms * 1_000_000
+		timeStart = time.monotonic_ns()
+		while pioIn.in_waiting < numWords and time.monotonic_ns() - timeStart < wait_ns:
+			pass
+	if pioIn.in_waiting < numWords:
+		raise WaitEnded("nothing received")
+	samples = array.array("L", [0] * numWords)
+	pioIn.readinto(samples)
+	for s in samples:
+		logBuffer.appendNoError(s & 0xFFFF)
+		logBuffer.appendNoError(s >> 16)
+		print(bin(s))
+	logBuffer.appendNoError(0)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -386,6 +438,24 @@ def doComm(sequence, printLog):
 			pioOut.write(bytes(packet))
 		def receivePacket(w):
 			receivePacket_iC(pulseIn, params, w)
+	elif commType == TYPE_XROS:
+		pioIn = rp2pio.StateMachine(
+			xros_RX_PIO,
+			frequency=1000000,
+			first_in_pin=pinXrosIn,
+			auto_push=True,
+			in_shift_right=False,
+		)
+		pioOut = rp2pio.StateMachine(
+			xros_TX_PIO,
+			frequency=175000,
+			first_out_pin=pinIRLED,
+			first_set_pin=pinIRLED,
+		)
+		def sendPacket(packet):
+			pioOut.write(bytes(packet))
+		def receivePacket(w):
+			receivePacketXros(pioIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -466,10 +536,15 @@ icGaoChu3 = [TYPE_IC, True,
 
 xroslinkListen = [TYPE_XROSLINK, False]
 xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it doesn't reply
+	#(tried increasing gap between bytes to match, which breaks on iC, but no difference here so let's not do that)
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
+
+xrosListen = [TYPE_XROS, False]
+xrosTrade1 = [TYPE_XROS, True, [0x05]]
+xrosTrade2 = [TYPE_XROS, False, [0x06]]
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xroslink1, True)
+	doComm(xrosTrade2, True)
