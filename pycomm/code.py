@@ -143,7 +143,7 @@ class Params:
 			self.pulseMax = 25
 		elif commType == TYPE_XROSLINK:
 			self.replyTimeout_ms = 100
-			self.packetLengthTimeout_ms = 10
+			self.packetLengthTimeout_ms = 15
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -190,8 +190,9 @@ def receiveDurs(pulseIn, params, waitForStart_ms):
 	receivedBytes.clear()
 	waitForStart(pulseIn, params, waitForStart_ms)
 	time.sleep(params.packetLengthTimeout_ms / 1000)
-	while True:
-		popPulse(pulseIn, "done")
+	while len(pulseIn) != 0:
+		popPulse(pulseIn, "n/a")
+	logBuffer.appendNoError(0xFFFF)
 
 def receivePacket_iC(pulsesIn, params, waitForStart_ms):
 	pulsesIn.clear()
@@ -370,12 +371,14 @@ def doComm(sequence, printLog):
 	elif commType == TYPE_XROSLINK:
 		pulseIn = pulseio.PulseIn(pinXrosIn, maxlen=300, idle_state=True)
 		pulseIn.pause()
-		pwmOut = pwmio.PWMOut(pinIRLED, frequency=100000, duty_cycle=0xFFFF)
-		pulseOut = pulseio.PulseOut(pwmOut)
-		if not goFirst:
-			pulseOut.send(array.array('H', [100, 100])) #workaround for bug
+		pioOut = rp2pio.StateMachine(
+			iC_TX_PIO,
+			frequency=25000,
+			first_out_pin=pinIRLED,
+			first_set_pin=pinIRLED,
+		)
 		def sendPacket(packet):
-			pulseOut.send(packet)
+			pioOut.write(bytes(packet))
 		def receivePacket(w):
 			receiveDurs(pulseIn, params, w)
 	else:
@@ -457,11 +460,11 @@ icGaoChu3 = [TYPE_IC, True,
 	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0xC7,0x81,0x97,0x6B,0xC1]]
 
 xroslinkListen = [TYPE_XROSLINK, False]
-xroslink1 = [TYPE_XROSLINK, True, array.array("H", [70,730,50,750,50,350,50,350,50,350,50,350,50,100])]
-#Should be 50,750... but that crashes. Even like this, first pulse coming out much longer than 70 in reality.
+xroslink1 = [TYPE_XROSLINK, True, [0x05]] #-> 48,354,48,1163,47,355,47,355,48,354,48,355,47,.
+xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xroslinkListen, True)
+	doComm(xroslink2, True)
