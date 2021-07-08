@@ -141,9 +141,14 @@ class Params:
 			self.replyTimeout_ms = 100
 			self.packetLengthTimeout_ms = 30
 			self.pulseMax = 25
+			self.tickLength = 100
+			self.tickMargin = 30
 		elif commType == TYPE_XROSLINK:
 			self.replyTimeout_ms = 100
 			self.packetLengthTimeout_ms = 15
+			self.pulseMax = 80
+			self.tickLength = 400
+			self.tickMargin = 100
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -221,9 +226,9 @@ def receivePacket_iC(pulsesIn, params, waitForStart_ms):
 			ended = True
 		logBuffer.appendNoError(tGap)
 		dur = tPulse + tGap
-		ticks = round(dur / 100)
-		dur100 = ticks * 100
-		off100 = abs(dur - dur100)
+		ticks = round(dur / params.tickLength)
+		durRounded = ticks * params.tickLength
+		offRounded = abs(dur - durRounded)
 		if ticksIntoByte + ticks >= 9:
 			#finish byte
 			for i in range(8 - ticksIntoByte):
@@ -232,7 +237,7 @@ def receivePacket_iC(pulsesIn, params, waitForStart_ms):
 			receivedBytes.append(currentByte)
 			currentByte = 0
 			ticksIntoByte = 0
-		elif off100 > 30:
+		elif offRounded > params.tickMargin:
 			raise BadPacket("pulse+gap %d = %d" % (pulseCount, dur))
 		else:
 			for i in range(ticks - 1):
@@ -380,7 +385,7 @@ def doComm(sequence, printLog):
 		def sendPacket(packet):
 			pioOut.write(bytes(packet))
 		def receivePacket(w):
-			receiveDurs(pulseIn, params, w)
+			receivePacket_iC(pulseIn, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -460,11 +465,11 @@ icGaoChu3 = [TYPE_IC, True,
 	[0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFF,0x13,0x70,0x70,0xC7,0x81,0x97,0x6B,0xC1]]
 
 xroslinkListen = [TYPE_XROSLINK, False]
-xroslink1 = [TYPE_XROSLINK, True, [0x05]] #-> 48,354,48,1163,47,355,47,355,48,354,48,355,47,.
+xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it doesn't reply
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xroslink2, True)
+	doComm(xroslink1, True)
