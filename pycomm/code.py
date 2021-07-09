@@ -39,8 +39,8 @@ for pin in pinsExtraPower:
 	io.value = True
 	extraPowerOut.append(io)
 
-probeOut = digitalio.DigitalInOut(pinProbeOut)
-probeOut.direction = digitalio.Direction.OUTPUT
+#probeOut = digitalio.DigitalInOut(pinProbeOut)
+#probeOut.direction = digitalio.Direction.OUTPUT
 
 iC_TX_ASM = """
 .program ictx
@@ -72,11 +72,17 @@ xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
 xros_RX_ASM = """
 .program xrosrx
-	wait 0 pin 0
+	mov osr null
+	set x 8 side 0
+	wait 0 pin 0 side 0
 loop:
-	in pins 1
-	jmp loop
+	nop [15] side 0
+	in pins 1 side 1
+	nop side 1
+	jmp x-- loop side 0
+	push side 0
 """
+#ValueError: Program does OUT without loading OSR -> added "mov osr null" -> side set not working
 xros_RX_PIO = adafruit_pioasm.assemble(xros_RX_ASM)
 
 class Buffer:
@@ -218,32 +224,31 @@ def waitForStart(pulsesIn, params, wait_ms):
 		pulsesIn.pause()
 		raise WaitEnded("nothing received")
 
-def receiveByteXros(digitalIn, params, wait_ms):
+def receiveByteXros(pioIn, params, wait_ms):
+	pioIn.restart()
+	pioIn.clear_rxfifo()
 	if wait_ms == WAIT_REPLY:
 		wait_ms = params.replyTimeout_ms
 	if wait_ms == WAIT_FOREVER:
-		while digitalIn.value == True:
+		while pioIn.in_waiting == 0:
 			pass
 	else:
 		wait_ns = wait_ms * 1_000_000
 		timeStart = time.monotonic_ns()
-		while digitalIn.value == True and time.monotonic_ns() - timeStart < wait_ns:
+		while pioIn.in_waiting == 0 and time.monotonic_ns() - timeStart < wait_ns:
 			pass
-	return digitalIn.value
+	if pioIn.in_waiting == 0:
+		return True
+	theByte = array.array("L", [0])
+	pioIn.readinto(theByte)
+	receivedBytes.append(theByte[0])
+	return False
 
-def receivePacketXros(digitalIn, params, wait_ms):
-	if receiveByteXros(digitalIn, params, wait_ms):
-		return
-	count = 1
-	while True:
-		print("byte", count)
-		if count == 8:
-			probeOut.value = True
-			time.sleep(0.001)
-			probeOut.value = False
-		count += 1
-		if receiveByteXros(digitalIn, params, params.nextByteTimeout_ms):
-			return
+def receivePacketXros(pioIn, params, wait_ms):
+	receivedBytes.clear()
+	ended = receiveByteXros(pioIn, params, wait_ms)
+	while not ended:
+		ended = receiveByteXros(pioIn, params, params.nextByteTimeout_ms)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -441,15 +446,14 @@ def doComm(sequence, printLog):
 		def receivePacket(w):
 			receivePacket_iC(inObject, params, w)
 	elif commType == TYPE_XROS:
-		"""
 		inObject = rp2pio.StateMachine(
 			xros_RX_PIO,
 			frequency=1000000,
 			first_in_pin=pinXrosIn,
-			auto_push=True,
-			in_shift_right=False,
-		)"""
-		inObject = digitalio.DigitalInOut(pinXrosIn)
+			first_sideset_pin=pinProbeOut,
+			first_out_pin=pinProbeOut, #?
+			#without: ValueError: Missing first_out_pin. Instruction 3 shifts out to pin(s) [in pins 1 side 1]
+		)
 		outObject = rp2pio.StateMachine(
 			xros_TX_PIO,
 			frequency=175000,
@@ -547,4 +551,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade2, True)
+	doComm(xrosListen, True)
