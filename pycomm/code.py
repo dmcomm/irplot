@@ -39,8 +39,8 @@ for pin in pinsExtraPower:
 	io.value = True
 	extraPowerOut.append(io)
 
-#probeOut = digitalio.DigitalInOut(pinProbeOut)
-#probeOut.direction = digitalio.Direction.OUTPUT
+probeOut = digitalio.DigitalInOut(pinProbeOut)
+probeOut.direction = digitalio.Direction.OUTPUT
 
 iC_TX_ASM = """
 .program ictx
@@ -177,6 +177,7 @@ class Params:
 			self.tickMargin = 100
 		elif commType == TYPE_XROS:
 			self.replyTimeout_ms = 30
+			self.nextByteTimeout_ms = 5
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -217,7 +218,7 @@ def waitForStart(pulsesIn, params, wait_ms):
 		pulsesIn.pause()
 		raise WaitEnded("nothing received")
 
-def receivePacketXros(pioIn, params, wait_ms):
+def receiveByteXros(pioIn, params, wait_ms):
 	numWords = 4
 	pioIn.restart()
 	pioIn.clear_rxfifo()
@@ -232,7 +233,7 @@ def receivePacketXros(pioIn, params, wait_ms):
 		while pioIn.in_waiting < numWords and time.monotonic_ns() - timeStart < wait_ns:
 			pass
 	if pioIn.in_waiting < numWords:
-		raise WaitEnded("nothing received")
+		raise WaitEnded()
 	samples = array.array("L", [0] * numWords)
 	pioIn.readinto(samples)
 	for s in samples:
@@ -240,6 +241,12 @@ def receivePacketXros(pioIn, params, wait_ms):
 		logBuffer.appendNoError(s >> 16)
 		print(bin(s))
 	logBuffer.appendNoError(0)
+
+def receivePacketXros(pioIn, params, wait_ms):
+	receiveByteXros(pioIn, params, wait_ms)
+	while True:
+		time.sleep(1) #test
+		receiveByteXros(pioIn, params, params.nextByteTimeout_ms)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
