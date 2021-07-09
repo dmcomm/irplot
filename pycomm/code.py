@@ -404,65 +404,63 @@ def doComm(sequence, printLog):
 	packetsToSend = sequence[2:]
 	params = Params(commType)
 	pwmOut = None
-	pulseOut = None
-	pulseIn = None
-	pioOut = None
-	pioIn = None
+	outObject = None
+	inObject = None
 	if commType == TYPE_DATALINK or commType == TYPE_FUSION:
 		pwmOut = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
-		pulseOut = pulseio.PulseOut(pwmOut)
-		pulseIn = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
-		pulseIn.pause()
+		outObject = pulseio.PulseOut(pwmOut)
+		inObject = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
+		inObject.pause()
 		if not goFirst:
-			pulseOut.send(array.array('H', [100, 100])) #workaround for bug
+			outObject.send(array.array('H', [100, 100])) #workaround for bug
 		def sendPacket(packet):
-			sendPacketModulated(pulseOut, params, packet)
+			sendPacketModulated(outObject, params, packet)
 		def receivePacket(w):
-			receivePacketModulated(pulseIn, params, w)
+			receivePacketModulated(inObject, params, w)
 	elif commType == TYPE_IC:
-		pulseIn = pulseio.PulseIn(pinRawIn, maxlen=300, idle_state=True)
-		pulseIn.pause()
-		pioOut = rp2pio.StateMachine(
+		inObject = pulseio.PulseIn(pinRawIn, maxlen=300, idle_state=True)
+		inObject.pause()
+		outObject = rp2pio.StateMachine(
 			iC_TX_PIO,
 			frequency=100000,
 			first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
 		)
 		def sendPacket(packet):
-			pioOut.write(bytes(packet))
+			outObject.write(bytes(packet))
 		def receivePacket(w):
-			receivePacket_iC(pulseIn, params, w)
+			receivePacket_iC(inObject, params, w)
 	elif commType == TYPE_XROSLINK:
-		pulseIn = pulseio.PulseIn(pinXrosIn, maxlen=300, idle_state=True)
-		pulseIn.pause()
-		pioOut = rp2pio.StateMachine(
+		inObject = pulseio.PulseIn(pinXrosIn, maxlen=300, idle_state=True)
+		inObject.pause()
+		outObject = rp2pio.StateMachine(
 			iC_TX_PIO,
 			frequency=25000,
 			first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
 		)
 		def sendPacket(packet):
-			pioOut.write(bytes(packet))
+			outObject.write(bytes(packet))
 		def receivePacket(w):
-			receivePacket_iC(pulseIn, params, w)
+			receivePacket_iC(inObject, params, w)
 	elif commType == TYPE_XROS:
-		pioIn = rp2pio.StateMachine(
+		inObject = rp2pio.StateMachine(
 			xros_RX_PIO,
 			frequency=1000000,
 			first_in_pin=pinXrosIn,
 			auto_push=True,
 			in_shift_right=False,
 		)
-		pioOut = rp2pio.StateMachine(
+		outObject = rp2pio.StateMachine(
 			xros_TX_PIO,
 			frequency=175000,
 			first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
 		)
 		def sendPacket(packet):
-			pioOut.write(bytes(packet))
+			outObject.write(bytes(packet))
 		def receivePacket(w):
-			receivePacketXros(pioIn, params, w)
+			receivePacketXros(inObject, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -478,16 +476,12 @@ def doComm(sequence, printLog):
 	except WaitEnded as e:
 		print(repr(e))
 	finally:
-		if pulseOut is not None:
-			pulseOut.deinit()
+		if inObject is not None:
+			inObject.deinit()
+		if outObject is not None:
+			outObject.deinit()
 		if pwmOut is not None:
 			pwmOut.deinit()
-		if pulseIn is not None:
-			pulseIn.deinit()
-		if pioOut is not None:
-			pioOut.deinit()
-		if pioIn is not None:
-			pioIn.deinit()
 	if printLog:
 		for i in range(len(logBuffer)):
 			print(logBuffer[i], end=",")
@@ -554,4 +548,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade2, True)
+	doComm(datalinkGive10Pt2nd, True)
