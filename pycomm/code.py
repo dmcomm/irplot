@@ -72,17 +72,18 @@ xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
 xros_RX_ASM = """
 .program xrosrx
-	mov osr null
-	set x 8 side 0
-	wait 0 pin 0 side 0
+	set x 7
+	wait 0 pin 0
 loop:
-	nop [15] side 0
-	in pins 1 side 1
-	nop side 1
-	jmp x-- loop side 0
-	push side 0
+	nop [12]
+	set pins 1
+	in pins 1
+	set pins 0
+	jmp x-- loop
+	push
+	nop [31]
+	nop [31]
 """
-#ValueError: Program does OUT without loading OSR -> added "mov osr null" -> side set not working
 xros_RX_PIO = adafruit_pioasm.assemble(xros_RX_ASM)
 
 class Buffer:
@@ -225,8 +226,6 @@ def waitForStart(pulsesIn, params, wait_ms):
 		raise WaitEnded("nothing received")
 
 def receiveByteXros(pioIn, params, wait_ms):
-	pioIn.restart()
-	pioIn.clear_rxfifo()
 	if wait_ms == WAIT_REPLY:
 		wait_ms = params.replyTimeout_ms
 	if wait_ms == WAIT_FOREVER:
@@ -241,14 +240,17 @@ def receiveByteXros(pioIn, params, wait_ms):
 		return True
 	theByte = array.array("L", [0])
 	pioIn.readinto(theByte)
-	receivedBytes.append(theByte[0])
+	logBuffer.appendNoError(theByte[0])
 	return False
 
 def receivePacketXros(pioIn, params, wait_ms):
+	pioIn.restart()
+	pioIn.clear_rxfifo()
 	receivedBytes.clear()
 	ended = receiveByteXros(pioIn, params, wait_ms)
 	while not ended:
 		ended = receiveByteXros(pioIn, params, params.nextByteTimeout_ms)
+	logBuffer.appendNoError(0xFFFF)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -450,9 +452,8 @@ def doComm(sequence, printLog):
 			xros_RX_PIO,
 			frequency=1000000,
 			first_in_pin=pinXrosIn,
-			first_sideset_pin=pinProbeOut,
-			first_out_pin=pinProbeOut, #?
-			#without: ValueError: Missing first_out_pin. Instruction 3 shifts out to pin(s) [in pins 1 side 1]
+			first_set_pin=pinProbeOut,
+			in_shift_right=False, #this is backwards?
 		)
 		outObject = rp2pio.StateMachine(
 			xros_TX_PIO,
