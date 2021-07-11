@@ -30,7 +30,7 @@ pinXrosIn = board.GP12
 pinProngDrive = board.GP19  #GP19 for high, GP20 for low (implied)
 pinProngWeakPull = board.GP21
 pinProngIn = board.GP26  #ADC0
-pinsExtraPower = [board.GP13, board.GP18]
+pinsExtraPower = [board.GP11, board.GP13, board.GP18]
 
 extraPowerOut = []
 for pin in pinsExtraPower:
@@ -70,23 +70,29 @@ xros_TX_ASM = """
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
-#try to take 4 samples across where each pulse is
+#try to take 16 samples across where each pulse is (4MHz clock)
 xros_RX_ASM = """
 .program xrosrx
-	set x 7
 	wait 0 pin 0
-loop:
-	nop [9]
+	set x 7
+	nop [7]
+bits:
+	nop [31]
+	nop
+	set y 15
 	set pins 1
+samples:
 	in pins 1
-	in pins 1
-	in pins 1
-	in pins 1
+	jmp y-- samples
 	set pins 0
-	jmp x-- loop
-	push
-	nop [31]
-	nop [31]
+	jmp x-- bits
+
+	set x 31
+delay1:
+	set y 31
+delay2:
+	jmp y-- delay2
+	jmp x-- delay1
 """
 xros_RX_PIO = adafruit_pioasm.assemble(xros_RX_ASM)
 
@@ -230,29 +236,40 @@ def waitForStart(pulsesIn, params, wait_ms):
 		raise WaitEnded("nothing received")
 
 def receiveByteXros(pioIn, params, wait_ms):
+	pioData = array.array("L", [0] * 4)
 	if wait_ms == WAIT_REPLY:
 		wait_ms = params.replyTimeout_ms
 	if wait_ms == WAIT_FOREVER:
-		while pioIn.in_waiting == 0:
+		while pioIn.in_waiting < 4:
 			pass
 	else:
 		wait_ns = wait_ms * 1_000_000
 		timeStart = time.monotonic_ns()
-		while pioIn.in_waiting == 0 and time.monotonic_ns() - timeStart < wait_ns:
+		while pioIn.in_waiting < 4 and time.monotonic_ns() - timeStart < wait_ns:
 			pass
-	if pioIn.in_waiting == 0:
+	if pioIn.in_waiting < 4:
 		return True
-	results = array.array("L", [0])
-	pioIn.readinto(results)
-	print(bin(results[0]), end=" ")
-	logBuffer.appendNoError(results[0])
+	pioIn.readinto(pioData)
+	#this decoding is too slow and will need to be done afterwards:
+	theByte = 0
+	for r in pioData:
+		theByte >>= 1
+		if not (r & 0xFFFF):
+			theByte |= 0x80
+		theByte >>= 1
+		if not (r & 0xFFFF0000):
+			theByte |= 0x80
+		print(bin(r), end=" ")
+	print()
+	receivedBytes.appendNoError(theByte)
 	return False
 
 def receivePacketXros(pioIn, params, wait_ms):
-	pioIn.restart()
 	pioIn.clear_rxfifo()
 	receivedBytes.clear()
 	ended = receiveByteXros(pioIn, params, wait_ms)
+	if ended:
+		raise WaitEnded("nothing received")
 	while not ended:
 		ended = receiveByteXros(pioIn, params, params.nextByteTimeout_ms)
 	logBuffer.appendNoError(0xFFFF)
@@ -455,10 +472,10 @@ def doComm(sequence, printLog):
 	elif commType == TYPE_XROS:
 		inObject = rp2pio.StateMachine(
 			xros_RX_PIO,
-			frequency=980000,
+			frequency=4_000_000,
 			first_in_pin=pinXrosIn,
 			first_set_pin=pinProbeOut,
-			in_shift_right=False, #this is backwards?
+			auto_push=True,
 		)
 		outObject = rp2pio.StateMachine(
 			xros_TX_PIO,
@@ -557,4 +574,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosListen, True)
+	doComm(xrosTrade2, True)
