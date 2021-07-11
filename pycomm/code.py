@@ -1,7 +1,7 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
 #Some iC, Data Link and Fusion Loader interaction.
-#Tested with CircuitPython 20210703-cece649 on Pi Pico.
+#Tested with CircuitPython 20210709-58fdf9e on Pi Pico.
 
 import array
 import board
@@ -38,6 +38,9 @@ for pin in pinsExtraPower:
 	io.direction = digitalio.Direction.OUTPUT
 	io.value = True
 	extraPowerOut.append(io)
+
+xrosInSize = 12
+xrosInBuffers = [array.array("L", [0] * 4) for i in range(xrosInSize)]
 
 #probeOut = digitalio.DigitalInOut(pinProbeOut)
 #probeOut.direction = digitalio.Direction.OUTPUT
@@ -235,8 +238,7 @@ def waitForStart(pulsesIn, params, wait_ms):
 		pulsesIn.pause()
 		raise WaitEnded("nothing received")
 
-def receiveByteXros(pioIn, params, wait_ms):
-	pioData = array.array("L", [0] * 4)
+def receiveByteXros(pioIn, params, wait_ms, destBuffer):
 	if wait_ms == WAIT_REPLY:
 		wait_ms = params.replyTimeout_ms
 	if wait_ms == WAIT_FOREVER:
@@ -247,31 +249,40 @@ def receiveByteXros(pioIn, params, wait_ms):
 		timeStart = time.monotonic_ns()
 		while pioIn.in_waiting < 4 and time.monotonic_ns() - timeStart < wait_ns:
 			pass
-	if pioIn.in_waiting < 4:
+	if pioIn.in_waiting == 0:
 		return True
-	pioIn.readinto(pioData)
-	#this decoding is too slow and will need to be done afterwards:
+	if pioIn.in_waiting < 4:
+		raise BadPacket("PIO in waiting = %d" % pioIn.in_waiting)
+	pioIn.readinto(destBuffer)
+	return False
+
+def decodeByteXros(xrosInBuffer):
 	theByte = 0
-	for r in pioData:
+	for i in range(4):
+		pioWord = xrosInBuffer[i]
 		theByte >>= 1
-		if not (r & 0xFFFF):
+		if not (pioWord & 0xFFFF):
 			theByte |= 0x80
 		theByte >>= 1
-		if not (r & 0xFFFF0000):
+		if not (pioWord & 0xFFFF0000):
 			theByte |= 0x80
-		print(bin(r), end=" ")
+		print(bin(pioWord), end=" ")
 	print()
 	receivedBytes.appendNoError(theByte)
 	return False
 
 def receivePacketXros(pioIn, params, wait_ms):
-	pioIn.clear_rxfifo()
 	receivedBytes.clear()
-	ended = receiveByteXros(pioIn, params, wait_ms)
-	if ended:
+	pioIn.clear_rxfifo()
+	time.sleep(0.001)
+	pioIn.clear_rxfifo()
+	if receiveByteXros(pioIn, params, wait_ms, xrosInBuffers[0]):
 		raise WaitEnded("nothing received")
-	while not ended:
-		ended = receiveByteXros(pioIn, params, params.nextByteTimeout_ms)
+	for i in range(1, xrosInSize):
+		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
+			break
+	for j in range(i):
+		decodeByteXros(xrosInBuffers[j])
 	logBuffer.appendNoError(0xFFFF)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
@@ -484,7 +495,9 @@ def doComm(sequence, printLog):
 			first_set_pin=pinIRLED,
 		)
 		def sendPacket(packet):
-			outObject.write(bytes(packet))
+			for b in packet:
+				outObject.write(bytes([b]))
+				time.sleep(0.002)
 		def receivePacket(w):
 			receivePacketXros(inObject, params, w)
 	else:
@@ -567,11 +580,12 @@ xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it d
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 xrosListen = [TYPE_XROS, False]
-xrosTrade1 = [TYPE_XROS, True, [0x05]]
+xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0xC4,0x00,0x00,0xC4]] #from scope screenshots
 xrosTrade2 = [TYPE_XROS, False, [0x06]]
+#read reply [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade2, True)
+	doComm(xrosTrade1, True)
