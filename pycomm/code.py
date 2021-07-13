@@ -188,6 +188,9 @@ class Params:
 		elif commType == TYPE_XROS:
 			self.replyTimeout_ms = 30
 			self.nextByteTimeout_ms = 5
+			self.gapMax = 6
+			self.tickLength = 17
+			self.tickMargin = 6
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -260,20 +263,41 @@ def decodeScopeBits(buffer):
 				prevLevel = level
 	logBuffer.appendNoError(0)
 
-def decodeByteXros(xrosInBuffer):
-	theByte = 0
-	for i in range(4):
-		pioWord = xrosInBuffer[i]
-		theByte >>= 1
-		if not (pioWord & 0xFFFF):
-			theByte |= 0x80
-		theByte >>= 1
-		if not (pioWord & 0xFFFF0000):
-			theByte |= 0x80
-		print(bin(pioWord), end=" ")
-	print()
-	receivedBytes.appendNoError(theByte)
-	return False
+#this is similar to iC but unclear how they could be combined
+def decodeByteXros(params, startIndex):
+	currentByte = 0
+	ticksIntoByte = 0
+	i = startIndex
+	while True:
+		if i >= len(logBuffer):
+			raise BadPacket("no room")
+		tPulse = logBuffer[i]
+		if tPulse == 0:
+			raise BadPacket("ended with gap")
+		if i >= len(logBuffer) - 1:
+			raise BadPacket("no room")
+		tGap = logBuffer[i+1]
+		if tGap > params.gapMax:
+			raise BadPacket("gap %d = %d" % (i - startIndex, tGap))
+		if tGap == 0:
+			#finish byte
+			for i in range(8 - ticksIntoByte):
+				currentByte >>= 1
+				currentByte |= 0x80
+			receivedBytes.append(currentByte)
+			return
+		dur = tPulse + tGap
+		ticks = round(dur / params.tickLength)
+		durRounded = ticks * params.tickLength
+		offRounded = abs(dur - durRounded)
+		if offRounded > params.tickMargin:
+			raise BadPacket("pulse+gap %d = %d" % (i - startIndex, dur))
+		for j in range(ticks - 1):
+			currentByte >>= 1
+			currentByte |= 0x80
+		currentByte >>= 1
+		ticksIntoByte += ticks
+		i += 2
 
 def receivePacketXros(pioIn, params, wait_ms):
 	receivedBytes.clear()
@@ -286,7 +310,9 @@ def receivePacketXros(pioIn, params, wait_ms):
 		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
 			break
 	for j in range(i):
+		startIndex = len(logBuffer)
 		decodeScopeBits(xrosInBuffers[j])
+		decodeByteXros(params, startIndex)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
