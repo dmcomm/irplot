@@ -63,12 +63,14 @@ iC_TX_PIO = adafruit_pioasm.assemble(iC_TX_ASM)
 xros_TX_ASM = """
 .program xrostx
 	pull
-	set pins 1 [1]
-""" + ("""
-	out pins 1
-	set pins 1 [1]
-""" * 8) + """
-	nop [5]
+	set x 7
+	set pins 1 [13]
+loop:
+	out pins 1 [3]
+	set pins 1 [11]
+	jmp x-- loop
+	nop [31]
+	nop [6]
 	set pins 0
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
@@ -490,7 +492,7 @@ def doComm(sequence, printLog):
 		)
 		outObject = rp2pio.StateMachine(
 			xros_TX_PIO,
-			frequency=175000,
+			frequency=1_000_000,
 			first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
 		)
@@ -580,7 +582,7 @@ xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it d
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 xrosListen = [TYPE_XROS, False]
-xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0xC4,0x00,0x00,0xC4]] #from scope screenshots
+xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0xE4,0x00,0x00,0xE6,0x03]] #from scope screenshots
 xrosTrade2 = [TYPE_XROS, False, [0x06]]
 #read reply [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
 
