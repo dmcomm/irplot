@@ -40,7 +40,7 @@ for pin in pinsExtraPower:
 	extraPowerOut.append(io)
 
 xrosInSize = 12
-xrosInBuffers = [array.array("L", [0] * 4) for i in range(xrosInSize)]
+xrosInBuffers = [array.array("L", [0] * 8) for i in range(xrosInSize)]
 
 #probeOut = digitalio.DigitalInOut(pinProbeOut)
 #probeOut.direction = digitalio.Direction.OUTPUT
@@ -75,31 +75,19 @@ loop:
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
-#try to take 16 samples across where each pulse is (4MHz clock)
-xros_RX_ASM = """
-.program xrosrx
+#take 256 samples after pin low, at half of clock speed
+#use in_shift_right=True, auto_push=True
+scope256_ASM = """
+	mov isr ~ null
+	in null 24
+	mov x isr ; x = 0xFF
+	mov isr null
 	wait 0 pin 0
-	set x 7
-	nop [7]
-bits:
-	nop [31]
-	nop
-	set y 15
-	set pins 1
-samples:
+loop:
 	in pins 1
-	jmp y-- samples
-	set pins 0
-	jmp x-- bits
-
-	set x 31
-delay1:
-	set y 31
-delay2:
-	jmp y-- delay2
-	jmp x-- delay1
+	jmp x-- loop
 """
-xros_RX_PIO = adafruit_pioasm.assemble(xros_RX_ASM)
+scope256_PIO = adafruit_pioasm.assemble(scope256_ASM)
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -244,19 +232,33 @@ def receiveByteXros(pioIn, params, wait_ms, destBuffer):
 	if wait_ms == WAIT_REPLY:
 		wait_ms = params.replyTimeout_ms
 	if wait_ms == WAIT_FOREVER:
-		while pioIn.in_waiting < 4:
+		while pioIn.in_waiting < 8:
 			pass
 	else:
 		wait_ns = wait_ms * 1_000_000
 		timeStart = time.monotonic_ns()
-		while pioIn.in_waiting < 4 and time.monotonic_ns() - timeStart < wait_ns:
+		while pioIn.in_waiting < 8 and time.monotonic_ns() - timeStart < wait_ns:
 			pass
 	if pioIn.in_waiting == 0:
 		return True
-	if pioIn.in_waiting < 4:
+	if pioIn.in_waiting < 8:
 		raise BadPacket("PIO in waiting = %d" % pioIn.in_waiting)
 	pioIn.readinto(destBuffer)
 	return False
+
+def decodeScopeBits(buffer):
+	prevLevel = False
+	samplesSame = 0
+	for item in buffer:
+		for i in range(32):
+			level = item & (1 << i) != 0
+			if level == prevLevel:
+				samplesSame += 1
+			else:
+				logBuffer.appendNoError(samplesSame)
+				samplesSame = 1
+				prevLevel = level
+	logBuffer.appendNoError(0)
 
 def decodeByteXros(xrosInBuffer):
 	theByte = 0
@@ -284,8 +286,7 @@ def receivePacketXros(pioIn, params, wait_ms):
 		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
 			break
 	for j in range(i):
-		decodeByteXros(xrosInBuffers[j])
-	logBuffer.appendNoError(0xFFFF)
+		decodeScopeBits(xrosInBuffers[j])
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -484,10 +485,9 @@ def doComm(sequence, printLog):
 			receivePacket_iC(inObject, params, w)
 	elif commType == TYPE_XROS:
 		inObject = rp2pio.StateMachine(
-			xros_RX_PIO,
-			frequency=4_000_000,
+			scope256_PIO,
+			frequency=2_000_000,
 			first_in_pin=pinXrosIn,
-			first_set_pin=pinProbeOut,
 			auto_push=True,
 		)
 		outObject = rp2pio.StateMachine(
@@ -582,12 +582,13 @@ xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it d
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 xrosListen = [TYPE_XROS, False]
-xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0xE4,0x00,0x00,0xE6,0x03]] #from scope screenshots
+xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0x01,0xE4,0x00,0xE6,0x03]]
 xrosTrade2 = [TYPE_XROS, False, [0x06]]
-#read reply [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
+#read reply from early version [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
+#scope screenshots had [0x02,0x05,0x00,0x01,0xE4,0x00,0x00,0xE6,0x03] but maybe they were mixed up
 
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade1, True)
+	doComm(xrosTrade2, True)
