@@ -1,7 +1,7 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
 #Some iC, Data Link and Fusion Loader interaction.
-#Tested with CircuitPython 20210709-58fdf9e on Pi Pico.
+#Tested with CircuitPython 20210703-cece649 on Pi Pico.
 
 import array
 import board
@@ -59,19 +59,29 @@ iC_TX_ASM = """
 """
 iC_TX_PIO = adafruit_pioasm.assemble(iC_TX_ASM)
 
-#guessing wildly about the bit mapping:
+#high 24 bits should be 1
 xros_TX_ASM = """
 .program xrostx
 	pull
-	set x 7
-	set pins 1 [13]
+	set pins 1 [2]
 loop:
-	out pins 1 [3]
-	set pins 1 [11]
-	jmp x-- loop
-	nop [31]
-	nop [6]
+	set pins 1 [10]
+	out pins 1
+	mov isr ~ osr
+	in null 24
+	mov x isr
+	; push ; testing
+	set pins 1
+	jmp x-- loop ; loop if there are any 0s left in low 8 bits osr
+	nop [24]
+	nop [24]
 	set pins 0
+
+	mov osr ~ null
+	out null 21
+	mov x osr ; x = 4095 (above=20), 2047 (above=21)
+delay:
+	jmp x-- delay
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
@@ -521,11 +531,20 @@ def doComm(sequence, printLog):
 			frequency=1_000_000,
 			first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
+			in_shift_right=False,
+			#wait_for_txstall=False, #temp for debugging
 		)
 		def sendPacket(packet):
-			for b in packet:
-				outObject.write(bytes([b]))
-				time.sleep(0.002)
+			toSend = array.array("L", [0xFFFF_FF00 | b for b in packet])
+			#print(toSend)
+			outObject.write(toSend)
+			#temp for debugging:
+			#testResult = array.array("L", [0])
+			#while True:
+			#	time.sleep(1)
+			#	if outObject.in_waiting != 0:
+			#		outObject.readinto(testResult)
+			#		print("0x%08X" % testResult[0])
 		def receivePacket(w):
 			receivePacketXros(inObject, params, w)
 	else:
@@ -612,7 +631,9 @@ xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0x01,0xE4,0x00,0xE6,
 xrosTrade2 = [TYPE_XROS, False, [0x06]]
 #read reply from early version [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
 #scope screenshots had [0x02,0x05,0x00,0x01,0xE4,0x00,0x00,0xE6,0x03] but maybe they were mixed up
+xrosTest = [TYPE_XROS, True, [0x05,0xE4]]
 
+time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
