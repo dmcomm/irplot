@@ -86,23 +86,17 @@ delay:
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
 
-#Outputs pulses to the SET pin, with the specified durations at quarter of clock speed.
-#High first. 0 duration will wait a long time.
-#(Nope, durations are still 1 too high with this algorithm.)
+#Outputs pulses to the SET pin, high first, with the specified durations +4 at clock speed.
 durs_TX_ASM = """
 	pull
 	set pins 1
 	mov x osr
-	jmp x-- loophigh
 loophigh:
-	nop [2]
 	jmp x-- loophigh
 	pull
 	set pins 0
 	mov x osr
-	jmp x-- looplow
 looplow:
-	nop [2]
 	jmp x-- looplow
 """
 durs_TX_PIO = adafruit_pioasm.assemble(durs_TX_ASM)
@@ -341,7 +335,7 @@ def receivePacketXros(pioIn, params, wait_ms):
 	for i in range(1, xrosInSize):
 		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
 			break
-	for j in range(i):
+	for j in range(1): #really i, but just doing the first for speed
 		startIndex = len(logBuffer)
 		decodeScopeBits(xrosInBuffers[j])
 		decodeByteXros(params, startIndex)
@@ -550,14 +544,15 @@ def doComm(sequence, printLog):
 		)
 		outObject = rp2pio.StateMachine(
 			durs_TX_PIO,
-			frequency=4_000_000,
+			frequency=1_000_000,
 			#first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
 			#wait_for_txstall=False, #temp for debugging
 		)
 		print(outObject.frequency)
 		def sendPacket(packet):
-			toSend = array.array("L", packet)
+			toSend = array.array("L", [dur - 4 for dur in packet])
+			print(toSend)
 			outObject.write(toSend)
 			#temp for debugging:
 			#testResult = array.array("L", [0])
@@ -653,13 +648,15 @@ xrosListen = [TYPE_XROS, False]
 #xrosTrade2 = [TYPE_XROS, False, [0x06]]
 #xrosTest = [TYPE_XROS, True, [0x05,0xE4]]
 
-xrosTrade1 = [TYPE_XROS, True, [32,1,34,1,16,1,16,2,16,1,16,1,53,10], [15,1,34,1,16,1,16,1,16,2,16,1,16,1,53,2500, 32,1,34,1,16,1,16,2,16,1,16,1,52,2500, 15,2,16,1,16,1,16,1,16,2,16,1,16,1,16,2,52,2500, 32,1,16,2,16,1,16,1,16,2,16,1,16,1,53,2500, 32,2,16,1,16,1,16,1,16,2,16,1,16,1,53,2500, 15,1,16,2,33,1,16,2,52,2500,15,2,15,2,16,1,16,1,16,2,16,1,16,1,16,1,53,2500, 15,2,50,1,16,2,52,2500,49,2,16,1,16,1,16,2,16,1,16,1,52,10]]
+#xrosTrade1 = [TYPE_XROS, True, [32,1,34,1,16,1,16,2,16,1,16,1,53,10], [15,1,34,1,16,1,16,1,16,2,16,1,16,1,53,2500, 32,1,34,1,16,1,16,2,16,1,16,1,52,2500, 15,2,16,1,16,1,16,1,16,2,16,1,16,1,16,2,52,2500, 32,1,16,2,16,1,16,1,16,2,16,1,16,1,53,2500, 32,2,16,1,16,1,16,1,16,2,16,1,16,1,53,2500, 15,1,16,2,33,1,16,2,52,2500,15,2,15,2,16,1,16,1,16,2,16,1,16,1,16,1,53,2500, 15,2,50,1,16,2,52,2500,49,2,16,1,16,1,16,2,16,1,16,1,52,10]]
+#clean it up:
+xrosTrade1 = [TYPE_XROS, True, [31,4,30,4,13,4,13,4,13,4,13,4,52,10], [14,4,30,4,13,4,13,4,13,4,13,4,13,4,52,2500, 31,4,30,4,13,4,13,4,13,4,13,4,52,2500, 14,4,13,4,13,4,13,4,13,4,13,4,13,4,13,4,52,2500, 31,4,13,4,13,4,13,4,13,4,13,4,13,4,52,2500, 31,4,13,4,13,4,13,4,13,4,13,4,13,4,52,2500, 14,4,13,4,30,4,13,4,52,2500,13,4,13,4,13,4,13,4,13,4,13,4,13,4,13,4,52,2500, 14,4,47,4,13,4,52,2500,48,4,13,4,13,4,13,4,13,4,13,4,52,10], [14,4,13,4,30,4,13,4,13,4,13,4,13,4,52,10]]
+xrosTrade2 = [TYPE_XROS, False, [14,4,47,4,13,4,13,4,13,4,13,4,52,10], [14,4,47,4,13,4,13,4,13,4,13,4,52,10]]
 xrosTest = [TYPE_XROS, True, [10,10,10,10,10,10]]
-
 
 time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTest, True)
+	doComm(xrosTrade2, True)
