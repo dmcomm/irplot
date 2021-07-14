@@ -59,7 +59,8 @@ iC_TX_ASM = """
 """
 iC_TX_PIO = adafruit_pioasm.assemble(iC_TX_ASM)
 
-#high 24 bits should be 1
+#Run at 1MHz, OUT and SET pins the same, in_shift_right=False. High 24 bits of data should be 1.
+#(This is not really how it works and will need redone.)
 xros_TX_ASM = """
 .program xrostx
 	pull
@@ -84,6 +85,27 @@ delay:
 	jmp x-- delay
 """
 xros_TX_PIO = adafruit_pioasm.assemble(xros_TX_ASM)
+
+#Outputs pulses to the SET pin, with the specified durations at quarter of clock speed.
+#High first. 0 duration will wait a long time.
+#(Nope, durations are still 1 too high with this algorithm.)
+durs_TX_ASM = """
+	pull
+	set pins 1
+	mov x osr
+	jmp x-- loophigh
+loophigh:
+	nop [2]
+	jmp x-- loophigh
+	pull
+	set pins 0
+	mov x osr
+	jmp x-- looplow
+looplow:
+	nop [2]
+	jmp x-- looplow
+"""
+durs_TX_PIO = adafruit_pioasm.assemble(durs_TX_ASM)
 
 #take 256 samples after pin low, at half of clock speed
 #use in_shift_right=True, auto_push=True
@@ -273,7 +295,7 @@ def decodeScopeBits(buffer):
 				prevLevel = level
 	logBuffer.appendNoError(0)
 
-#this is similar to iC but unclear how they could be combined
+#this is not really how it works and will need redone
 def decodeByteXros(params, startIndex):
 	currentByte = 0
 	ticksIntoByte = 0
@@ -527,16 +549,15 @@ def doComm(sequence, printLog):
 			auto_push=True,
 		)
 		outObject = rp2pio.StateMachine(
-			xros_TX_PIO,
-			frequency=1_000_000,
-			first_out_pin=pinIRLED,
+			durs_TX_PIO,
+			frequency=4_000_000,
+			#first_out_pin=pinIRLED,
 			first_set_pin=pinIRLED,
-			in_shift_right=False,
 			#wait_for_txstall=False, #temp for debugging
 		)
+		print(outObject.frequency)
 		def sendPacket(packet):
-			toSend = array.array("L", [0xFFFF_FF00 | b for b in packet])
-			#print(toSend)
+			toSend = array.array("L", packet)
 			outObject.write(toSend)
 			#temp for debugging:
 			#testResult = array.array("L", [0])
@@ -627,15 +648,18 @@ xroslink1 = [TYPE_XROSLINK, True, [0x05], [0x02,0x1B,0xC0]] #but after that it d
 xroslink2 = [TYPE_XROSLINK, False, [0x06]]
 
 xrosListen = [TYPE_XROS, False]
-xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0x01,0xE4,0x00,0xE6,0x03]]
-xrosTrade2 = [TYPE_XROS, False, [0x06]]
-#read reply from early version [0x02,0x05,0x00,0x01,0x01,0x64,0x00,0x66,0x03]
+#xrosTrade1 = [TYPE_XROS, True, [0x05], [0x02,0x05,0x00,0x01,0x01,0xE4,0x00,0xE6,0x03]]
 #scope screenshots had [0x02,0x05,0x00,0x01,0xE4,0x00,0x00,0xE6,0x03] but maybe they were mixed up
-xrosTest = [TYPE_XROS, True, [0x05,0xE4]]
+#xrosTrade2 = [TYPE_XROS, False, [0x06]]
+#xrosTest = [TYPE_XROS, True, [0x05,0xE4]]
+
+xrosTrade1 = [TYPE_XROS, True, [32,1,34,1,16,1,16,2,16,1,16,1,53,10], [15,1,34,1,16,1,16,1,16,2,16,1,16,1,53,2500, 32,1,34,1,16,1,16,2,16,1,16,1,52,2500, 15,2,16,1,16,1,16,1,16,2,16,1,16,1,16,2,52,2500, 32,1,16,2,16,1,16,1,16,2,16,1,16,1,53,2500, 32,2,16,1,16,1,16,1,16,2,16,1,16,1,53,2500, 15,1,16,2,33,1,16,2,52,2500,15,2,15,2,16,1,16,1,16,2,16,1,16,1,16,1,53,2500, 15,2,50,1,16,2,52,2500,49,2,16,1,16,1,16,2,16,1,16,1,52,10]]
+xrosTest = [TYPE_XROS, True, [10,10,10,10,10,10]]
+
 
 time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade2, True)
+	doComm(xrosTest, True)
