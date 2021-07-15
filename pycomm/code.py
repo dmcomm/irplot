@@ -101,19 +101,24 @@ looplow:
 """
 durs_TX_PIO = adafruit_pioasm.assemble(durs_TX_ASM)
 
-#take 256 samples after pin low, at half of clock speed
-#use in_shift_right=True, auto_push=True
-scope256_ASM = """
-	mov isr ~ null
-	in null 24
-	mov x isr ; x = 0xFF
-	mov isr null
+#take 240 samples after pin low, 30 per word, at half of clock speed
+#use in_shift_right=False, out_shift_right=True, auto_push=True, push_threshold=30
+scope240_ASM = """
+	mov osr ~ null
+	out null 24
+	mov x osr ; x = 255
+	set y 15
+subtract:
+	jmp x-- next
+next:
+	jmp y-- subtract
+	; x = 239
 	wait 0 pin 0
-loop:
+sampling:
 	in pins 1
-	jmp x-- loop
+	jmp x-- sampling
 """
-scope256_PIO = adafruit_pioasm.assemble(scope256_ASM)
+scope240_PIO = adafruit_pioasm.assemble(scope240_ASM)
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -279,7 +284,9 @@ def decodeScopeBits(buffer):
 	prevLevel = False
 	samplesSame = 0
 	for item in buffer:
-		for i in range(32):
+		#b = bin(item)
+		#print("0" * (34 - len(b)) + b[2:])
+		for i in range(29, -1, -1):
 			level = item & (1 << i) != 0
 			if level == prevLevel:
 				samplesSame += 1
@@ -335,10 +342,12 @@ def receivePacketXros(pioIn, params, wait_ms):
 	for i in range(1, xrosInSize):
 		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
 			break
-	for j in range(1): #really i, but just doing the first for speed
+	time1 = time.monotonic()
+	for j in range(i):
 		startIndex = len(logBuffer)
 		decodeScopeBits(xrosInBuffers[j])
-		decodeByteXros(params, startIndex)
+		#decodeByteXros(params, startIndex)
+	print((time.monotonic() - time1) * 1000)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -537,10 +546,13 @@ def doComm(sequence, printLog):
 			receivePacket_iC(inObject, params, w)
 	elif commType == TYPE_XROS:
 		inObject = rp2pio.StateMachine(
-			scope256_PIO,
+			scope240_PIO,
 			frequency=2_000_000,
 			first_in_pin=pinXrosIn,
+			in_shift_right=False,
+			out_shift_right=True,
 			auto_push=True,
+			push_threshold=30,
 		)
 		outObject = rp2pio.StateMachine(
 			durs_TX_PIO,
