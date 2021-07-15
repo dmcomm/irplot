@@ -342,12 +342,12 @@ def receivePacketXros(pioIn, params, wait_ms):
 	for i in range(1, xrosInSize):
 		if receiveByteXros(pioIn, params, params.nextByteTimeout_ms, xrosInBuffers[i]):
 			break
-	time1 = time.monotonic()
+	#time1 = time.monotonic()
 	for j in range(i):
 		startIndex = len(logBuffer)
 		decodeScopeBits(xrosInBuffers[j])
-		#decodeByteXros(params, startIndex)
-	print((time.monotonic() - time1) * 1000)
+		decodeByteXros(params, startIndex)
+	#print((time.monotonic() - time1) * 1000)
 
 def receiveDurs(pulseIn, params, waitForStart_ms):
 	pulseIn.clear()
@@ -561,10 +561,10 @@ def doComm(sequence, printLog):
 			first_set_pin=pinIRLED,
 			#wait_for_txstall=False, #temp for debugging
 		)
-		print(outObject.frequency)
+		#print(outObject.frequency)
 		def sendPacket(packet):
 			toSend = array.array("L", [dur - 4 for dur in packet])
-			print(toSend)
+			#print(toSend)
 			outObject.write(toSend)
 			#temp for debugging:
 			#testResult = array.array("L", [0])
