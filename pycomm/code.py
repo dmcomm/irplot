@@ -17,6 +17,7 @@ TYPE_FUSION = 1
 TYPE_IC = 2
 TYPE_XROS = 3
 TYPE_XROSLINK = 4
+TYPE_2PRONG = 5
 
 WAIT_FOREVER = None
 WAIT_REPLY = -1
@@ -30,7 +31,7 @@ pinXrosIn = board.GP12
 pinProngDrive = board.GP19  #GP19 for high, GP20 for low (implied)
 pinProngWeakPull = board.GP21
 pinProngIn = board.GP26  #ADC0
-pinsExtraPower = [board.GP11, board.GP13, board.GP18]
+pinsExtraPower = [board.GP11, board.GP13, board.GP18, pinProngWeakPull] #TODO make last one changeable
 
 extraPowerOut = []
 for pin in pinsExtraPower:
@@ -42,8 +43,8 @@ for pin in pinsExtraPower:
 xrosInSize = 12
 xrosInBuffers = [array.array("L", [0] * 8) for i in range(xrosInSize)]
 
-#probeOut = digitalio.DigitalInOut(pinProbeOut)
-#probeOut.direction = digitalio.Direction.OUTPUT
+probeOut = digitalio.DigitalInOut(pinProbeOut)
+probeOut.direction = digitalio.Direction.OUTPUT
 
 iC_TX_ASM = """
 .program ictx
@@ -119,6 +120,35 @@ sampling:
 	jmp x-- sampling
 """
 scope240_PIO = adafruit_pioasm.assemble(scope240_ASM)
+
+prong_TX_ASM = """
+start:
+	pull
+	mov x osr
+	jmp x-- notdrivelow
+	jmp drivelow  ; if osr==0
+notdrivelow:
+	jmp x-- notdrivehigh
+	jmp drivehigh ; if osr==1
+notdrivehigh:
+	jmp x-- delay
+	jmp release   ; if osr==2
+	; else:
+delay:
+	jmp x-- delay
+	jmp start
+drivelow:
+	set pins 0
+	set pindirs 3
+	jmp start
+drivehigh:
+	set pins 1
+	set pindirs 3
+	jmp start
+release:
+	set pindirs 0
+"""
+prong_TX_PIO = adafruit_pioasm.assemble(prong_TX_ASM)
 
 class Buffer:
 	def __init__(self, length, typecode, filler=0):
@@ -575,6 +605,23 @@ def doComm(sequence, printLog):
 			#		print("0x%08X" % testResult[0])
 		def receivePacket(w):
 			receivePacketXros(inObject, params, w)
+	elif commType == TYPE_2PRONG:
+		inObject = pulseio.PulseIn(pinProngIn, maxlen=100, idle_state=True)
+		inObject.pause()
+		outObject = rp2pio.StateMachine(
+			prong_TX_PIO,
+			frequency=1_000_000,
+			first_set_pin=pinProngDrive,
+			set_pin_count=2,
+			initial_set_pin_direction=0,
+		)
+		def sendPacket(packet):
+			toSend = array.array("L", packet)
+			probeOut.value = True
+			outObject.write(toSend)
+			probeOut.value = False
+		def receivePacket(w):
+			pass
 	else:
 		raise ValueError("commType")
 	try:
@@ -666,9 +713,11 @@ xrosTrade1 = [TYPE_XROS, True, [31,4,30,4,13,4,13,4,13,4,13,4,52,10], [14,4,30,4
 xrosTrade2 = [TYPE_XROS, False, [14,4,47,4,13,4,13,4,13,4,13,4,52,10], [14,4,47,4,13,4,13,4,13,4,13,4,52,10]]
 xrosTest = [TYPE_XROS, True, [10,10,10,10,10,10]]
 
+prongTest = [TYPE_2PRONG, True, [0,40, 2,40, 1,40, 2,40, 0,40, 1,40, 2]]
+
 time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosTrade2, True)
+	doComm(prongTest, True)
