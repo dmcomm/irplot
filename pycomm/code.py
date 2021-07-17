@@ -252,6 +252,29 @@ class Params:
 			self.gapMax = 6
 			self.tickLength = 17
 			self.tickMargin = 6
+		elif commType == TYPE_2PRONG:
+			self.preHighSend = 3000
+			self.preLowMin = 40000
+			self.preLowSend = 59000
+			#self.preLowMax? PulseIn only goes up to 65535
+			self.startHighMin = 1500
+			self.startHighSend = 2083
+			self.startHighMax = 2500
+			self.startLowMin = 600
+			self.startLowSend = 917
+			self.startLowMax = 1200
+			self.bitHighMin = 800
+			self.bit0HighSend = 1000
+			self.bitHighThreshold = 1800
+			self.bit1HighSend = 2667
+			self.bitHighMax = 3400
+			self.bitLowMin = 1000
+			self.bit1LowSend = 1667
+			self.bit0LowSend = 3167
+			self.bitLowMax = 3500
+			self.cooldownSend = 400
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 300
 
 class FakePulsesIn:
 	def __init__(self, arr):
@@ -523,6 +546,80 @@ def sendPacketModulated(pulseOut, params, bytesToSend):
 	pulseOut.send(arrayToSend)
 	return arrayToSend
 
+def receivePacketProngs(pulseIn, params, waitForStart_ms):
+	pulseIn.clear()
+	pulseIn.resume()
+	packetLengthTimeout_ns = params.packetLengthTimeout_ms * 1_000_000
+	#wait for first pulse:
+	waitForStart(pulseIn, params, waitForStart_ms)
+	#wait until we get enough durations or it takes too long:
+	timeStart = time.monotonic_ns()
+	while True:
+		if len(pulseIn) >= 35:
+			pulseIn.pause()
+			break
+		if time.monotonic_ns() - timeStart > packetLengthTimeout_ns:
+			pulsesIn.pause()
+			raise BadPacket("timed out")
+	#process the packet:
+	#TODO: store timeStart-pulsesIn[0]?
+	try:
+		t = pulseIn.popleft()
+		logBuffer.appendNoError(t)
+		if t < params.preLowMin:
+			raise BadPacket("preLow = %d" % t)
+		t = pulseIn.popleft()
+		logBuffer.appendNoError(t)
+		if t < params.startHighMin or t > params.startHighMax:
+			raise BadPacket("startHigh = %d" % t)
+		t = pulseIn.popleft()
+		logBuffer.appendNoError(t)
+		if t < params.startLowMin or t > params.startLowMax:
+			raise BadPacket("startLow = %d" % t)
+		result = 0
+		bitCount = 0
+		for i in range(16):
+			t = pulseIn.popleft()
+			logBuffer.appendNoError(t)
+			if t < params.bitHighMin or t > params.bitHighMax:
+				raise BadPacket("bitHigh %d = %d" % (i + 1, t))
+			result >>= 1
+			if t > params.bitHighThreshold:
+				result |= 0x8000
+			t = pulseIn.popleft()
+			logBuffer.appendNoError(t)
+			if t < params.bitLowMin or t > params.bitLowMax:
+				raise BadPacket("bitLow %d = %d" % (i + 1, t))
+		print("%04X" % result)
+	finally:
+		logBuffer.appendNoError(0xFFFF)
+
+def sendPacketProngs(pioOut, params, bitsToSend):
+	DRIVE_LOW = 0
+	DRIVE_HIGH = 1
+	RELEASE = 2
+	arrayToSend = array.array("L", [
+		DRIVE_HIGH, params.preHighSend,
+		DRIVE_LOW, params.preLowSend,
+		DRIVE_HIGH, params.startHighSend,
+		DRIVE_LOW, params.startLowSend,
+	])
+	for i in range(16):
+		arrayToSend.append(DRIVE_HIGH)
+		if bitsToSend & 1:
+			arrayToSend.append(params.bit1HighSend)
+			arrayToSend.append(DRIVE_LOW)
+			arrayToSend.append(params.bit1LowSend)
+		else:
+			arrayToSend.append(params.bit0HighSend)
+			arrayToSend.append(DRIVE_LOW)
+			arrayToSend.append(params.bit0LowSend)
+		bitsToSend >>= 1
+	arrayToSend.append(DRIVE_HIGH)
+	arrayToSend.append(params.cooldownSend)
+	arrayToSend.append(RELEASE)
+	pioOut.write(arrayToSend)
+
 def printBytes(bytesToPrint):
 	for b in bytesToPrint:
 		print("0x%02X" % b, end=",")
@@ -616,12 +713,9 @@ def doComm(sequence, printLog):
 			initial_set_pin_direction=0,
 		)
 		def sendPacket(packet):
-			toSend = array.array("L", packet)
-			probeOut.value = True
-			outObject.write(toSend)
-			probeOut.value = False
+			sendPacketProngs(outObject, params, packet)
 		def receivePacket(w):
-			pass
+			receivePacketProngs(inObject, params, w)
 	else:
 		raise ValueError("commType")
 	try:
@@ -714,10 +808,12 @@ xrosTrade2 = [TYPE_XROS, False, [14,4,47,4,13,4,13,4,13,4,13,4,52,10], [14,4,47,
 xrosTest = [TYPE_XROS, True, [10,10,10,10,10,10]]
 
 prongTest = [TYPE_2PRONG, True, [0,40, 2,40, 1,40, 2,40, 0,40, 1,40, 2]]
+dmogBattle1 = [TYPE_2PRONG, True, 0xFC03, 0xFD02]
+dmogBattle2 = [TYPE_2PRONG, False, 0xFC03]
 
 time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(prongTest, True)
+	doComm(dmogBattle1, True)
