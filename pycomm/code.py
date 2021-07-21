@@ -18,6 +18,8 @@ TYPE_IC = 2
 TYPE_XROS = 3
 TYPE_XROSLINK = 4
 TYPE_2PRONG = 5
+TYPE_3PRONG = 6
+TYPE_XROSMINI = 7
 
 WAIT_FOREVER = None
 WAIT_REPLY = -1
@@ -31,7 +33,10 @@ pinXrosIn = board.GP12
 pinProngDrive = board.GP19  #GP19 for high, GP20 for low (implied)
 pinProngWeakPull = board.GP21
 pinProngIn = board.GP26  #ADC0
-pinsExtraPower = [board.GP11, board.GP13, board.GP18, pinProngWeakPull] #TODO make last one changeable
+pinsExtraPower = [board.GP11, board.GP13, board.GP18]
+
+prongWeakPullOut = digitalio.DigitalInOut(pinProngWeakPull)
+prongWeakPullOut.direction = digitalio.Direction.OUTPUT
 
 extraPowerOut = []
 for pin in pinsExtraPower:
@@ -253,6 +258,8 @@ class Params:
 			self.tickLength = 17
 			self.tickMargin = 6
 		elif commType == TYPE_2PRONG:
+			self.idleLevel = True
+			self.invertBitRead = False
 			self.preHighSend = 3000
 			self.preLowMin = 40000
 			self.preLowSend = 59000
@@ -273,6 +280,56 @@ class Params:
 			self.bit0LowSend = 3167
 			self.bitLowMax = 3500
 			self.cooldownSend = 400
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 300
+		elif commType == TYPE_3PRONG:
+			self.idleLevel = True
+			self.invertBitRead = False
+			self.preHighSend = 3000
+			self.preLowMin = 40000
+			self.preLowSend = 60000
+			#self.preLowMax? PulseIn only goes up to 65535
+			self.startHighMin = 1500
+			self.startHighSend = 2200
+			self.startHighMax = 2500
+			self.startLowMin = 1000
+			self.startLowSend = 1600
+			self.startLowMax = 2000
+			self.bitHighMin = 800
+			self.bit0HighSend = 1600
+			self.bitHighThreshold = 2600
+			self.bit1HighSend = 4000
+			self.bitHighMax = 4500
+			self.bitLowMin = 1200
+			self.bit1LowSend = 1600
+			self.bit0LowSend = 4000
+			self.bitLowMax = 4500
+			self.cooldownSend = 400
+			self.replyTimeout_ms = 100
+			self.packetLengthTimeout_ms = 300
+		elif commType == TYPE_XROSMINI:
+			self.idleLevel = False
+			self.invertBitRead = True
+			self.preHighSend = 5000
+			self.preLowMin = 30000
+			self.preLowSend = 40000
+			#self.preLowMax? PulseIn only goes up to 65535
+			self.startHighMin = 9000
+			self.startHighSend = 11000
+			self.startHighMax = 13000
+			self.startLowMin = 4000
+			self.startLowSend = 6000
+			self.startLowMax = 8000
+			self.bitHighMin = 1000
+			self.bit0HighSend = 4000
+			self.bitHighThreshold = 3000
+			self.bit1HighSend = 1400
+			self.bitHighMax = 4500
+			self.bitLowMin = 1200
+			self.bit1LowSend = 4400
+			self.bit0LowSend = 1600
+			self.bitLowMax = 5000
+			self.cooldownSend = 200
 			self.replyTimeout_ms = 100
 			self.packetLengthTimeout_ms = 300
 
@@ -559,7 +616,7 @@ def receivePacketProngs(pulseIn, params, waitForStart_ms):
 			pulseIn.pause()
 			break
 		if time.monotonic_ns() - timeStart > packetLengthTimeout_ns:
-			pulsesIn.pause()
+			pulseIn.pause()
 			raise BadPacket("timed out")
 	#process the packet:
 	#TODO: store timeStart-pulsesIn[0]?
@@ -595,27 +652,31 @@ def receivePacketProngs(pulseIn, params, waitForStart_ms):
 		logBuffer.appendNoError(0xFFFF)
 
 def sendPacketProngs(pioOut, params, bitsToSend):
-	DRIVE_LOW = 0
-	DRIVE_HIGH = 1
+	if params.idleLevel == True:
+		DRIVE_ACTIVE = 0
+		DRIVE_INACTIVE = 1
+	else:
+		DRIVE_ACTIVE = 1
+		DRIVE_INACTIVE = 0
 	RELEASE = 2
 	arrayToSend = array.array("L", [
-		DRIVE_HIGH, params.preHighSend,
-		DRIVE_LOW, params.preLowSend,
-		DRIVE_HIGH, params.startHighSend,
-		DRIVE_LOW, params.startLowSend,
+		DRIVE_INACTIVE, params.preHighSend,
+		DRIVE_ACTIVE, params.preLowSend,
+		DRIVE_INACTIVE, params.startHighSend,
+		DRIVE_ACTIVE, params.startLowSend,
 	])
 	for i in range(16):
-		arrayToSend.append(DRIVE_HIGH)
+		arrayToSend.append(DRIVE_INACTIVE)
 		if bitsToSend & 1:
 			arrayToSend.append(params.bit1HighSend)
-			arrayToSend.append(DRIVE_LOW)
+			arrayToSend.append(DRIVE_ACTIVE)
 			arrayToSend.append(params.bit1LowSend)
 		else:
 			arrayToSend.append(params.bit0HighSend)
-			arrayToSend.append(DRIVE_LOW)
+			arrayToSend.append(DRIVE_ACTIVE)
 			arrayToSend.append(params.bit0LowSend)
 		bitsToSend >>= 1
-	arrayToSend.append(DRIVE_HIGH)
+	arrayToSend.append(DRIVE_INACTIVE)
 	arrayToSend.append(params.cooldownSend)
 	arrayToSend.append(RELEASE)
 	pioOut.write(arrayToSend)
@@ -702,8 +763,9 @@ def doComm(sequence, printLog):
 			#		print("0x%08X" % testResult[0])
 		def receivePacket(w):
 			receivePacketXros(inObject, params, w)
-	elif commType == TYPE_2PRONG:
-		inObject = pulseio.PulseIn(pinProngIn, maxlen=100, idle_state=True)
+	elif commType in [TYPE_2PRONG, TYPE_3PRONG, TYPE_XROSMINI]:
+		prongWeakPullOut.value = params.idleLevel
+		inObject = pulseio.PulseIn(pinProngIn, maxlen=100, idle_state=params.idleLevel)
 		inObject.pause()
 		outObject = rp2pio.StateMachine(
 			prong_TX_PIO,
@@ -713,7 +775,7 @@ def doComm(sequence, printLog):
 			initial_set_pin_direction=0,
 		)
 		def sendPacket(packet):
-			sendPacketProngs(outObject, params, packet)
+			sendPacketProngs(outObject, params, (packet[1] << 8) | packet[0])
 		def receivePacket(w):
 			receivePacketProngs(inObject, params, w)
 	else:
@@ -807,13 +869,15 @@ xrosTrade1 = [TYPE_XROS, True, [31,4,30,4,13,4,13,4,13,4,13,4,52,10], [14,4,30,4
 xrosTrade2 = [TYPE_XROS, False, [14,4,47,4,13,4,13,4,13,4,13,4,52,10], [14,4,47,4,13,4,13,4,13,4,13,4,52,10]]
 xrosTest = [TYPE_XROS, True, [10,10,10,10,10,10]]
 
-prongTest = [TYPE_2PRONG, True, [0,40, 2,40, 1,40, 2,40, 0,40, 1,40, 2]]
-dmogBattle1 = [TYPE_2PRONG, True, 0xFC03, 0xFD02]
-dmogBattle2 = [TYPE_2PRONG, False, 0xFC03]
+dmogBattle1 = [TYPE_2PRONG, True, [0x03, 0xFC], [0x02, 0xFD]]
+dmogBattle2 = [TYPE_2PRONG, False, [0x03, 0xFC]]
+jd3giveCourage = [TYPE_2PRONG, True, [0x0F, 0x8C], [0x0F, 0x48]]
+penxGiveStrMax = [TYPE_3PRONG, False, [0x59, 0x04], [0x09, 0x07]]
+xrosMiniBattle1 = [TYPE_XROSMINI, True, [0x17, 0x10], [0x97, 0x00], [0x47, 0x2E], [0xF7, 0x11]]
 
 time.sleep(5)
 runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(dmogBattle1, True)
+	doComm(xrosMiniBattle1, True)
