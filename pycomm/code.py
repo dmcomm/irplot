@@ -1,7 +1,7 @@
 #This file is part of the DMComm project by BladeSabre. License: MIT.
 
-#Some iC, Data Link and Fusion Loader interaction.
-#Tested with CircuitPython 20210703-cece649 on Pi Pico.
+#Some interaction with pronged devices, iC, Data Link and Fusion Loader.
+#New PulseOut API was added to CircuitPython on 2021-07-28.
 
 import array
 import board
@@ -692,16 +692,12 @@ def doComm(sequence, printLog):
 	goFirst = sequence[1]
 	packetsToSend = sequence[2:]
 	params = Params(commType)
-	pwmOut = None
 	outObject = None
 	inObject = None
 	if commType == TYPE_DATALINK or commType == TYPE_FUSION:
-		pwmOut = pwmio.PWMOut(pinIRLED, frequency=38000, duty_cycle=2**15)
-		outObject = pulseio.PulseOut(pwmOut)
+		outObject = pulseio.PulseOut(pinIRLED, frequency=38000, duty_cycle=2**15)
 		inObject = pulseio.PulseIn(pinDemodIn, maxlen=300, idle_state=True)
 		inObject.pause()
-		if not goFirst:
-			outObject.send(array.array('H', [100, 100])) #workaround for bug
 		def sendPacket(packet):
 			sendPacketModulated(outObject, params, packet)
 		def receivePacket(w):
@@ -797,8 +793,6 @@ def doComm(sequence, printLog):
 			inObject.deinit()
 		if outObject is not None:
 			outObject.deinit()
-		if pwmOut is not None:
-			pwmOut.deinit()
 	if printLog:
 		for i in range(len(logBuffer)):
 			print(logBuffer[i], end=",")
@@ -880,4 +874,4 @@ runs = 1
 while(True):
 	print("begin", runs)
 	runs += 1
-	doComm(xrosMiniBattle1, True)
+	doComm(datalinkGive10Pt2nd, True)
