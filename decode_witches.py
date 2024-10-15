@@ -2,8 +2,8 @@
 import json
 
 CLOCK = 19520
-ADJUST_HIGH = 0
-ADJUST_LOW = CLOCK // 2
+DECODE_ADJUST_HIGH = 0
+DECODE_ADJUST_LOW = CLOCK // 2
 
 def decode(pulses):
 	result = []
@@ -13,14 +13,14 @@ def decode(pulses):
 	for pulse in pulses:
 		if level:
 			# falling edge, round down prev high
-			new_bits = (pulse + ADJUST_HIGH) // CLOCK
+			new_bits = (pulse + DECODE_ADJUST_HIGH) // CLOCK
 			for _ in range(new_bits):
 				current_byte <<= 1
 				current_byte |= 1
 			bit_count += new_bits
 		else:
 			# rising edge, round up prev low
-			new_bits = (pulse + ADJUST_LOW) // CLOCK
+			new_bits = (pulse + DECODE_ADJUST_LOW) // CLOCK
 			current_byte <<= new_bits
 			bit_count += new_bits
 		level = not level
